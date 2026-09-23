@@ -16,27 +16,31 @@ GitHub (github.com and GitHub Enterprise Server) is supported today; the app is 
 
 ## Install
 
-Download `gitbar-x.y.z.dmg` from the [latest release](https://github.com/NavaneethVijay/gitbar/releases/latest), open it, and drag **gitbar** onto the **Applications** shortcut.
+Build it from source — one command, and since nothing is downloaded, macOS has no reason to block it.
 
-gitbar isn't notarized yet, so on first launch macOS says it *could not verify "gitbar" is free of malware* — macOS blocks it before the app itself can run. To allow it, either:
-
-- run `xattr -dr com.apple.quarantine /Applications/gitbar.app` in Terminal (simplest); or
-- open it once and choose **Done**, go to **System Settings → Privacy & Security**, click **Open Anyway** next to *"gitbar" was blocked…*, then **open gitbar again right away** and click **Open** in the dialog that follows.
-
-gitbar has no window or Dock icon — once it's running, look for its `</>` icon in the menu bar.
-
-(On macOS 15 and later, right-click → Open no longer bypasses this.) You only need to do this once — after that, updates install themselves: **Settings → General → Check for Updates…**, or automatically in the background.
-
-Then open **Settings → Accounts → GitHub → Add Account**, choose Cloud or Self-hosted, and paste a [personal access token](https://github.com/settings/tokens) with read access to your repos (plus write access to pull requests if you want to review or open PRs). Pick the repos to show under the account.
-
-Requires macOS 15 or later.
-
-## Build from source
-
-Requires Xcode and [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`).
+Requires macOS 15+, Xcode, and [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`).
 
 ```sh
-make run      # generate the project, build Debug, launch
+git clone https://github.com/NavaneethVijay/gitbar.git
+cd gitbar
+make install        # builds, installs to ~/Applications/gitbar.app, and opens it
+```
+
+gitbar lives in the menu bar (the `</>` icon) — it has no window or Dock icon. Open **Settings → Accounts → GitHub → Add Account**, choose Cloud or Self-hosted, and paste a [personal access token](https://github.com/settings/tokens) with read access to your repos (plus write access to pull requests if you want to review or open PRs). Then pick the repos to show.
+
+To update: `git pull && make install`. To remove: `make uninstall`. Install elsewhere with `make install INSTALL_DIR=/Applications`.
+
+<details>
+<summary>Prebuilt downloads (DMG)</summary>
+
+Releases also ship a DMG, but gitbar isn't notarized yet (that needs an Apple Developer ID), so macOS blocks the downloaded app with *"Apple could not verify gitbar is free of malware"*. If you use it anyway, drag it to Applications and run `xattr -dr com.apple.quarantine /Applications/gitbar.app` **before** first opening it. Building from source avoids all of this.
+
+</details>
+
+## Development
+
+```sh
+make run      # Debug build (unsigned) and launch
 make build    # build only
 make clean    # remove build output and the generated project
 ```

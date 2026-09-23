@@ -1,4 +1,4 @@
-.PHONY: gen build run update-keys release release-dry clean
+.PHONY: gen build run install uninstall update-keys release release-dry clean
 
 DERIVED := build/DerivedData.noindex
 XCODEBUILD := xcodebuild -project gitbar.xcodeproj -scheme gitbar -derivedDataPath $(DERIVED)
@@ -12,6 +12,16 @@ build: gen
 run: build
 	pkill -x gitbar || true
 	open $(DERIVED)/Build/Products/Debug/gitbar.app
+
+# Build a Release copy from this checkout into ~/Applications (or
+# INSTALL_DIR=…) and open it. Built locally, so no Gatekeeper prompt.
+# Update later with: git pull && make install
+install: gen
+	INSTALL_DIR="$(INSTALL_DIR)" scripts/install.sh
+
+uninstall:
+	pkill -x gitbar || true
+	rm -rf "$(or $(INSTALL_DIR),$(HOME)/Applications)/gitbar.app"
 
 # One-time: create the Sparkle EdDSA key (private half stays in your login
 # Keychain) and write its public half into project.yml.

@@ -8,30 +8,19 @@
 #
 # Optional release notes: build/release/notes.md (shown in the update dialog).
 #
-# Signing is ad-hoc for now (no Developer ID): Sparkle verifies every update
-# with the EdDSA key from `make update-keys`. With a Developer ID later, set
-# SIGN_IDENTITY="Developer ID Application: …" and add notarization.
+# Build + signing live in scripts/build-app.sh (ad-hoc for now; set
+# SIGN_IDENTITY="Developer ID Application: …" once there is one, and add
+# notarization). Sparkle verifies every update with the EdDSA key from
+# `make update-keys`.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 VERSION="${1:-}"
 REPO="${GITBAR_REPO:-NavaneethVijay/gitbar}"
-SIGN_IDENTITY="${SIGN_IDENTITY:--}"
 DRY_RUN="${DRY_RUN:-}"
 
-# The hardened runtime is only needed for notarization (Developer ID). With
-# ad-hoc signing it breaks launch: its library validation rejects the
-# embedded Sparkle.framework, since ad-hoc code has no Team ID to match.
-if [[ "$SIGN_IDENTITY" == "-" ]]; then
-    HARDENED=NO; RUNTIME_OPTS=()
-else
-    HARDENED=YES; RUNTIME_OPTS=(--options runtime --timestamp)
-fi
-
-DERIVED="build/DerivedData.noindex"
 OUT="build/release"
-TOOLS="$DERIVED/SourcePackages/artifacts/sparkle/Sparkle/bin"
-APP="$DERIVED/Build/Products/Release/gitbar.app"
+TOOLS="build/DerivedData.noindex/SourcePackages/artifacts/sparkle/Sparkle/bin"
 TAG="v$VERSION"
 
 die() { echo "error: $*" >&2; exit 1; }
@@ -49,32 +38,7 @@ if [[ -z "$DRY_RUN" ]]; then
     ! gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1 || die "release $TAG already exists on $REPO."
 fi
 
-step "Building gitbar $VERSION (Release)"
-# CFBundleVersion = the marketing version: Sparkle compares dotted versions
-# directly, so there's no separate build counter to keep in sync.
-xcodebuild -project gitbar.xcodeproj -scheme gitbar -configuration Release -derivedDataPath "$DERIVED" \
-    -destination "generic/platform=macOS" \
-    MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$VERSION" \
-    CODE_SIGN_IDENTITY="$SIGN_IDENTITY" CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM="" \
-    CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO ENABLE_HARDENED_RUNTIME="$HARDENED" \
-    clean build | grep -E "^\*\*|error:" || true
-[[ -d "$APP" ]] || die "build failed — no $APP"
-
-step "Signing ($SIGN_IDENTITY)"
-# Sparkle's own helpers must be re-signed inside-out with the same identity,
-# and the app last, keeping the entitlements Xcode applied (sandbox etc.).
-ENTITLEMENTS="$(mktemp)"
-codesign -d --entitlements :- "$APP" > "$ENTITLEMENTS" 2>/dev/null
-SPARKLE="$APP/Contents/Frameworks/Sparkle.framework"
-sign() { codesign --force ${RUNTIME_OPTS[@]+"${RUNTIME_OPTS[@]}"} --sign "$SIGN_IDENTITY" "$@"; }
-sign "$SPARKLE/Versions/B/XPCServices/Installer.xpc"
-sign --preserve-metadata=entitlements "$SPARKLE/Versions/B/XPCServices/Downloader.xpc"
-sign "$SPARKLE/Versions/B/Autoupdate"
-sign "$SPARKLE/Versions/B/Updater.app"
-sign "$SPARKLE"
-sign --entitlements "$ENTITLEMENTS" "$APP"
-rm -f "$ENTITLEMENTS"
-codesign --verify --deep --strict "$APP" || die "signature verification failed"
+APP="$(scripts/build-app.sh "$VERSION" | tail -1)"
 
 step "Packaging"
 mkdir -p "$OUT"
@@ -106,9 +70,6 @@ hdiutil create -volname "gitbar $VERSION" -srcfolder "$STAGING" -fs HFS+ -format
 rm -rf "$STAGING"
 hdiutil verify "$DMG" >/dev/null || die "DMG verification failed"
 
-# Keep this build-folder copy out of Spotlight / "Open With" — the installed
-# app in /Applications should be the only gitbar macOS knows about.
-/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -u "$APP" 2>/dev/null || true
 
 if [[ -n "$DRY_RUN" ]]; then
     step "Dry run — nothing published. Artifacts:"
