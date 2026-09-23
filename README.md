@@ -16,9 +16,16 @@ GitHub (github.com and GitHub Enterprise Server) is supported today; the app is 
 
 ## Install
 
-Download `gitbar-x.y.z.zip` from the [latest release](https://github.com/NavaneethVijay/gitbar/releases/latest), unzip, and move `gitbar.app` to Applications.
+Download `gitbar-x.y.z.dmg` from the [latest release](https://github.com/NavaneethVijay/gitbar/releases/latest), open it, and drag **gitbar** onto the **Applications** shortcut.
 
-gitbar isn't notarized yet, so the first launch needs **right-click → Open** (or System Settings → Privacy & Security → Open Anyway). After that, updates install themselves: **Settings → General → Check for Updates…**, or automatically in the background.
+gitbar isn't notarized yet, so on first launch macOS says it *could not verify "gitbar" is free of malware* — macOS blocks it before the app itself can run. To allow it, either:
+
+- run `xattr -dr com.apple.quarantine /Applications/gitbar.app` in Terminal (simplest); or
+- open it once and choose **Done**, go to **System Settings → Privacy & Security**, click **Open Anyway** next to *"gitbar" was blocked…*, then **open gitbar again right away** and click **Open** in the dialog that follows.
+
+gitbar has no window or Dock icon — once it's running, look for its `</>` icon in the menu bar.
+
+(On macOS 15 and later, right-click → Open no longer bypasses this.) You only need to do this once — after that, updates install themselves: **Settings → General → Check for Updates…**, or automatically in the background.
 
 Then open **Settings → Accounts → GitHub → Add Account**, choose Cloud or Self-hosted, and paste a [personal access token](https://github.com/settings/tokens) with read access to your repos (plus write access to pull requests if you want to review or open PRs). Pick the repos to show under the account.
 
@@ -36,7 +43,7 @@ make clean    # remove build output and the generated project
 
 ## Releasing
 
-Releases are GitHub releases carrying the app zip and a Sparkle `appcast.xml`; installed copies check `releases/latest/download/appcast.xml`.
+Each GitHub release carries a DMG (for installing), plus a zip and a Sparkle `appcast.xml` (for updates); installed copies check `releases/latest/download/appcast.xml`.
 
 One-time setup:
 

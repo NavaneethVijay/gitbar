@@ -13,8 +13,8 @@ settings:
     # Both are the release version (`make release` sets them): Sparkle compares
     # CFBundleVersion against the appcast, so a plain counter here would sort
     # wrong against "x.y.z".
-    MARKETING_VERSION: "0.1.0"
-    CURRENT_PROJECT_VERSION: "0.1.0"
+    MARKETING_VERSION: "0.1.1"
+    CURRENT_PROJECT_VERSION: "0.1.1"
     MACOSX_DEPLOYMENT_TARGET: "15.0"
     CODE_SIGN_STYLE: Automatic
 targets:

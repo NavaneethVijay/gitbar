@@ -5,7 +5,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-TOOLS="build/DerivedData/SourcePackages/artifacts/sparkle/Sparkle/bin"
+TOOLS="build/DerivedData.noindex/SourcePackages/artifacts/sparkle/Sparkle/bin"
 [[ -x "$TOOLS/generate_keys" ]] || { echo "Sparkle tools not found — run 'make update-keys'." >&2; exit 1; }
 
 "$TOOLS/generate_keys" >/dev/null

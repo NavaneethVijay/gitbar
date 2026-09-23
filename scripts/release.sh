@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Builds a signed gitbar release and publishes it as a GitHub release that the
-# app's "Check for Updates…" (Sparkle) can find and install.
+# Builds a signed gitbar release and publishes it as a GitHub release: a DMG
+# for first installs (drag to Applications), plus the zip + appcast.xml that
+# the app's "Check for Updates…" (Sparkle) installs from.
 #
 #   make release VERSION=0.2.0       build, sign, publish release v0.2.0
 #   make release-dry VERSION=0.2.0   same, into build/release, publishes nothing
@@ -27,7 +28,7 @@ else
     HARDENED=YES; RUNTIME_OPTS=(--options runtime --timestamp)
 fi
 
-DERIVED="build/DerivedData"
+DERIVED="build/DerivedData.noindex"
 OUT="build/release"
 TOOLS="$DERIVED/SourcePackages/artifacts/sparkle/Sparkle/bin"
 APP="$DERIVED/Build/Products/Release/gitbar.app"
@@ -77,7 +78,7 @@ codesign --verify --deep --strict "$APP" || die "signature verification failed"
 
 step "Packaging"
 mkdir -p "$OUT"
-find "$OUT" -maxdepth 1 \( -name '*.zip' -o -name 'appcast.xml' -o -name '*.delta' \) -delete
+find "$OUT" -maxdepth 1 \( -name '*.zip' -o -name '*.dmg' -o -name 'appcast.xml' -o -name '*.delta' -o -name 'gitbar-*.md' \) -delete
 ZIP="$OUT/gitbar-$VERSION.zip"
 ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
 [[ -f "$OUT/notes.md" ]] && cp "$OUT/notes.md" "$OUT/gitbar-$VERSION.md"
@@ -94,6 +95,21 @@ else
     echo "warning: no SUPublicEDKey yet — skipping appcast (run 'make update-keys')."
 fi
 
+# The DMG is for people installing by hand: the app next to an Applications
+# shortcut. Built after the appcast so generate_appcast only sees the zip.
+step "Building DMG"
+DMG="$OUT/gitbar-$VERSION.dmg"
+STAGING="$(mktemp -d)"
+ditto "$APP" "$STAGING/gitbar.app"
+ln -s /Applications "$STAGING/Applications"
+hdiutil create -volname "gitbar $VERSION" -srcfolder "$STAGING" -fs HFS+ -format UDZO -ov "$DMG" >/dev/null
+rm -rf "$STAGING"
+hdiutil verify "$DMG" >/dev/null || die "DMG verification failed"
+
+# Keep this build-folder copy out of Spotlight / "Open With" — the installed
+# app in /Applications should be the only gitbar macOS knows about.
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -u "$APP" 2>/dev/null || true
+
 if [[ -n "$DRY_RUN" ]]; then
     step "Dry run — nothing published. Artifacts:"
     ls -lh "$OUT"
@@ -103,7 +119,7 @@ fi
 step "Publishing $TAG to $REPO"
 NOTES_ARGS=(--generate-notes)
 [[ -f "$OUT/notes.md" ]] && NOTES_ARGS=(--notes-file "$OUT/notes.md")
-gh release create "$TAG" "$ZIP" "$OUT/appcast.xml" --repo "$REPO" --title "gitbar $VERSION" "${NOTES_ARGS[@]}"
+gh release create "$TAG" "$DMG" "$ZIP" "$OUT/appcast.xml" --repo "$REPO" --title "gitbar $VERSION" "${NOTES_ARGS[@]}"
 
 # Keep the repo's version in step with what's published.
 sed -i '' "s/^\(    MARKETING_VERSION: \).*/\1\"$VERSION\"/; s/^\(    CURRENT_PROJECT_VERSION: \).*/\1\"$VERSION\"/" project.yml

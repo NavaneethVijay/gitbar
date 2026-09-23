@@ -1,6 +1,6 @@
 .PHONY: gen build run update-keys release release-dry clean
 
-DERIVED := build/DerivedData
+DERIVED := build/DerivedData.noindex
 XCODEBUILD := xcodebuild -project gitbar.xcodeproj -scheme gitbar -derivedDataPath $(DERIVED)
 
 gen:
