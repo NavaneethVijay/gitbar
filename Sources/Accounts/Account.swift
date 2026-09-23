@@ -11,6 +11,8 @@ struct Account: Identifiable, Codable, Equatable, Sendable {
     var login: String
     var name: String?
     var avatarURL: URL?
+    /// What the token can do, from the last check (`nil` until checked).
+    var access: TokenAccess?
 
     /// On the provider's own hosted service, rather than a self-hosted instance.
     var isCloud: Bool { host == provider.defaultHost }
@@ -20,17 +22,18 @@ struct Account: Identifiable, Codable, Equatable, Sendable {
         return login
     }
 
-    init(id: UUID, provider: ProviderKind, host: String, login: String, name: String?, avatarURL: URL?) {
+    init(id: UUID, provider: ProviderKind, host: String, login: String, name: String?, avatarURL: URL?, access: TokenAccess? = nil) {
         self.id = id
         self.provider = provider
         self.host = host
         self.login = login
         self.name = name
         self.avatarURL = avatarURL
+        self.access = access
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, provider, host, login, name, avatarURL
+        case id, provider, host, login, name, avatarURL, access
     }
 
     /// Accounts saved before providers existed have no `provider`/`host` —
@@ -44,5 +47,6 @@ struct Account: Identifiable, Codable, Equatable, Sendable {
         login = try container.decode(String.self, forKey: .login)
         name = try container.decodeIfPresent(String.self, forKey: .name)
         avatarURL = try container.decodeIfPresent(URL.self, forKey: .avatarURL)
+        access = try container.decodeIfPresent(TokenAccess.self, forKey: .access)
     }
 }

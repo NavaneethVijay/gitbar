@@ -42,6 +42,9 @@ targets:
     info:
       path: Generated-Info.plist
       properties:
+        # Don't force the discrete GPU on dual-GPU Macs: a menu bar app has no
+        # use for it, and each forced switch can glitch the whole screen.
+        NSSupportsAutomaticGraphicsSwitching: true
         # Where Sparkle looks for new releases — `make release` uploads
         # appcast.xml to each GitHub release; "latest" always resolves.
         SUFeedURL: https://github.com/NavaneethVijay/gitbar/releases/latest/download/appcast.xml

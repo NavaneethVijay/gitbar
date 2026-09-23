@@ -61,6 +61,14 @@ actor HTTPTransport {
 
     /// Decoded body plus the pagination signal.
     func get<T: Decodable>(_ url: URL, headers: [String: String] = [:]) async throws -> (value: T, hasNextPage: Bool) {
+        let result: (value: T, hasNextPage: Bool, response: HTTPURLResponse) = try await getWithResponse(url, headers: headers)
+        return (result.value, result.hasNextPage)
+    }
+
+    /// `get`, plus the HTTP response itself — for providers that report
+    /// things in headers (token scopes, a requested poll interval). On a 304
+    /// it's the 304's response, which carries the same headers.
+    func getWithResponse<T: Decodable>(_ url: URL, headers: [String: String] = [:]) async throws -> (value: T, hasNextPage: Bool, response: HTTPURLResponse) {
         var request = makeRequest(url, method: "GET", headers: headers)
 
         let cacheKey = url.absoluteString + " " + headers.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value)" }.joined(separator: "&")
@@ -86,7 +94,13 @@ actor HTTPTransport {
                 responseCache[cacheKey] = CachedResponse(etag: etag, data: data, hasNextPage: hasNextPage)
             }
         }
-        return (try decode(T.self, from: data), hasNextPage)
+        return (try decode(T.self, from: data), hasNextPage, http)
+    }
+
+    /// A body-less write (e.g. marking a notification read) — no JSON either way.
+    func sendEmpty(_ method: String, _ url: URL) async throws {
+        let (data, http) = try await send(makeRequest(url, method: method, headers: [:]))
+        try checkStatus(http, data: data)
     }
 
     /// A write (or a GraphQL query) — JSON body in, decoded JSON out.

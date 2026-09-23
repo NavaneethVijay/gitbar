@@ -10,6 +10,8 @@ GitHub (github.com and GitHub Enterprise Server) is supported today; the app is 
 - **Pull requests and issues** per repo, paginated, with real CI status per PR.
 - **PR detail**: description (rendered like GitHub), reviewers, checks, comments — and submit a review (Approve / Request changes / Comment).
 - **Create pull requests**: pick source and target branch, title, and description — prefilled from the repo's PR template.
+- **Notifications**: an inbox of review requests, mentions, assignments and more, an unread dot on the menu bar icon, per-repo unread counts, and macOS alerts for new ones (you choose which reasons). Needs a classic token with the `notifications` or `repo` scope.
+- **Token check**: when you add an account, gitbar tells you what the token can do (read repos, review/open PRs, notifications) and how to fix what's missing.
 - **Multiple accounts**, cloud or self-hosted.
 - **Background refresh** (configurable), cheap on your rate limit: unchanged data comes back as `304 Not Modified`.
 - Light / Dark / System appearance, open at login, automatic updates.
@@ -23,12 +25,12 @@ Requires macOS 15+, Xcode, and [XcodeGen](https://github.com/yonaskolb/XcodeGen)
 ```sh
 git clone https://github.com/NavaneethVijay/gitbar.git
 cd gitbar
-make install        # builds, installs to ~/Applications/gitbar.app, and opens it
+make install        # builds, installs to /Applications/gitbar.app, and opens it
 ```
 
-gitbar lives in the menu bar (the `</>` icon) — it has no window or Dock icon. Open **Settings → Accounts → GitHub → Add Account**, choose Cloud or Self-hosted, and paste a [personal access token](https://github.com/settings/tokens) with read access to your repos (plus write access to pull requests if you want to review or open PRs). Then pick the repos to show.
+gitbar lives in the menu bar — it has no window or Dock icon. Open **Settings → Accounts → GitHub → Add Account**, choose Cloud or Self-hosted, and paste a [personal access token](https://github.com/settings/tokens) with read access to your repos (plus write access to pull requests if you want to review or open PRs). Then pick the repos to show.
 
-To update: `git pull && make install`. To remove: `make uninstall`. Install elsewhere with `make install INSTALL_DIR=/Applications`.
+To update: `git pull && make install`. To remove: `make uninstall`. Install elsewhere with `make install INSTALL_DIR=~/Applications` (no admin rights needed).
 
 <details>
 <summary>Prebuilt downloads (DMG)</summary>

@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import SwiftUI
 
 /// Live data for every favorited repo across all accounts and providers.
@@ -7,55 +8,69 @@ import SwiftUI
 ///
 /// Two tiers: `refresh()` fetches a few items per repo for the status ring;
 /// the repo screen pages through everything only once opened.
+///
+/// `@Observable`: each view re-renders only for the properties it reads.
+/// Every UI-visible write goes through `assign`, which skips unchanged
+/// values — most background refreshes are ETag 304s that change nothing,
+/// and an unconditional write would still redraw the whole popover.
 @MainActor
-final class LiveRepoStore: ObservableObject {
-    @Published private(set) var snapshots: [RepoSnapshot] = []
-    @Published private(set) var isLoading = false
-    @Published private(set) var loadError: String?
+@Observable
+final class LiveRepoStore {
+    private(set) var snapshots: [RepoSnapshot] = []
+    private(set) var isLoading = false
+    private(set) var loadError: String?
     /// Set when a fetch was skipped because the rate limit is nearly spent.
-    @Published private(set) var rateLimitWarning: String?
+    private(set) var rateLimitWarning: String?
 
     // Repo-detail pagination state, keyed by repo.
-    @Published private(set) var detailPullRequests: [RepoRef: [RepoPullRequest]] = [:]
-    @Published private(set) var detailIssues: [RepoRef: [RepoIssue]] = [:]
-    @Published private(set) var hasMorePullRequests: [RepoRef: Bool] = [:]
-    @Published private(set) var hasMoreIssues: [RepoRef: Bool] = [:]
-    @Published private(set) var isLoadingMorePullRequests: [RepoRef: Bool] = [:]
-    @Published private(set) var isLoadingMoreIssues: [RepoRef: Bool] = [:]
+    private(set) var detailPullRequests: [RepoRef: [RepoPullRequest]] = [:]
+    private(set) var detailIssues: [RepoRef: [RepoIssue]] = [:]
+    private(set) var hasMorePullRequests: [RepoRef: Bool] = [:]
+    private(set) var hasMoreIssues: [RepoRef: Bool] = [:]
+    private(set) var isLoadingMorePullRequests: [RepoRef: Bool] = [:]
+    private(set) var isLoadingMoreIssues: [RepoRef: Bool] = [:]
+
+    // "Only mine": the account's own open PRs, fetched server-side and paged
+    // separately from the full list.
+    private(set) var minePullRequests: [RepoRef: [RepoPullRequest]] = [:]
+    private(set) var hasMoreMinePullRequests: [RepoRef: Bool] = [:]
+    private(set) var isLoadingMoreMinePullRequests: [RepoRef: Bool] = [:]
 
     // PR-number search: only PRs fetched by number because they weren't loaded.
-    @Published private(set) var prSearchResults: [RepoRef: RepoPullRequest] = [:]
-    @Published private(set) var isSearchingPR: [RepoRef: Bool] = [:]
-    @Published private(set) var prSearchError: [RepoRef: String] = [:]
+    private(set) var prSearchResults: [RepoRef: RepoPullRequest] = [:]
+    private(set) var isSearchingPR: [RepoRef: Bool] = [:]
+    private(set) var prSearchError: [RepoRef: String] = [:]
 
     // Per-PR lazy loading, per section.
-    @Published private(set) var loadingChecksFor: Set<PRRef> = []
-    @Published private(set) var loadingCommentsFor: Set<PRRef> = []
-    @Published private(set) var loadingReviewersFor: Set<PRRef> = []
+    private(set) var loadingChecksFor: Set<PRRef> = []
+    private(set) var loadingCommentsFor: Set<PRRef> = []
+    private(set) var loadingReviewersFor: Set<PRRef> = []
 
-    @Published private(set) var isSubmittingReview: [PRRef: Bool] = [:]
-    @Published private(set) var reviewSubmitError: [PRRef: String] = [:]
+    private(set) var isSubmittingReview: [PRRef: Bool] = [:]
+    private(set) var reviewSubmitError: [PRRef: String] = [:]
 
-    @Published private(set) var isRefreshingPRDetail: [PRRef: Bool] = [:]
+    private(set) var isRefreshingPRDetail: [PRRef: Bool] = [:]
 
-    private var prPageCursor: [RepoRef: Int] = [:]
-    private var issuePageCursor: [RepoRef: Int] = [:]
+    @ObservationIgnored private var prPageCursor: [RepoRef: Int] = [:]
+    @ObservationIgnored private var issuePageCursor: [RepoRef: Int] = [:]
+    @ObservationIgnored private var minePageCursor: [RepoRef: Int] = [:]
+    @ObservationIgnored private var lastMineRefreshAt: [RepoRef: Date] = [:]
 
     // `refresh()` joins an in-flight run and skips within
     // `minimumRefreshInterval` of the last; detail screens use the same
     // interval to decide whether a revisit re-fetches.
-    private var refreshTask: Task<Void, Never>?
-    private var lastRefreshAt: Date?
-    private var lastRepoDetailRefreshAt: [RepoRef: Date] = [:]
-    private var lastPRDetailRefreshAt: [PRRef: Date] = [:]
-    private var isRefreshingRepoDetail: Set<RepoRef> = []
+    @ObservationIgnored private var refreshTask: Task<Void, Never>?
+    @ObservationIgnored private var lastRefreshAt: Date?
+    @ObservationIgnored private var lastRepoDetailRefreshAt: [RepoRef: Date] = [:]
+    @ObservationIgnored private var lastPRDetailRefreshAt: [PRRef: Date] = [:]
+    @ObservationIgnored private var isRefreshingRepoDetail: Set<RepoRef> = []
     private static let minimumRefreshInterval: TimeInterval = 60
 
-    private let accountStore: AccountStore
-    private let favoriteStore: FavoriteRepoStore
+    @ObservationIgnored private let accountStore: AccountStore
+    @ObservationIgnored private let favoriteStore: FavoriteRepoStore
 
     /// One client per account, reused: rate-limit and ETag state live on the instance.
-    private var clientCache: [UUID: any ProviderClient] = [:]
+    @ObservationIgnored private var clientCache: [UUID: any ProviderClient] = [:]
 
     /// Below this many requests remaining, new batches are skipped.
     private static let rateLimitFloor = 50
@@ -69,6 +84,7 @@ final class LiveRepoStore: ObservableObject {
     }
 
     var hasConnectedAccount: Bool { !accountStore.accounts.isEmpty }
+    var accountCount: Int { accountStore.accounts.count }
     var hasFavorites: Bool {
         accountStore.accounts.contains { !favoriteStore.favoriteFullNames(for: $0.id).isEmpty }
     }
@@ -76,6 +92,11 @@ final class LiveRepoStore: ObservableObject {
     /// Which provider a repo lives on — for wording ("PR"/"MR", `#`/`!`).
     func provider(for repo: RepoRef) -> ProviderKind {
         account(for: repo)?.provider ?? .github
+    }
+
+    /// The account's own login — for "mine" filters.
+    func login(for repo: RepoRef) -> String? {
+        account(for: repo)?.login
     }
 
     func capabilities(for repo: RepoRef) -> ProviderCapabilities {
@@ -124,8 +145,8 @@ final class LiveRepoStore: ObservableObject {
     private func performRefresh() async {
         let accounts = accountStore.accounts
         guard !accounts.isEmpty else {
-            snapshots = []
-            loadError = nil
+            assign(\.snapshots, [])
+            assign(\.loadError, nil)
             return
         }
 
@@ -139,7 +160,7 @@ final class LiveRepoStore: ObservableObject {
                 usable.append((account, client))
             }
         }
-        rateLimitWarning = warnings.first
+        assign(\.rateLimitWarning, warnings.first)
 
         let jobs: [(repo: RepoRef, account: Account, client: any ProviderClient)] = usable.flatMap { entry in
             favoriteStore.favoriteFullNames(for: entry.account.id).sorted().map {
@@ -149,14 +170,14 @@ final class LiveRepoStore: ObservableObject {
 
         guard !jobs.isEmpty else {
             if warnings.isEmpty {
-                snapshots = []
-                loadError = nil
+                assign(\.snapshots, [])
+                assign(\.loadError, nil)
             }
             return
         }
 
-        isLoading = true
-        loadError = nil
+        assign(\.isLoading, true)
+        assign(\.loadError, nil)
 
         let results = await withTaskGroup(of: (RepoRef, Result<RepoSnapshot, Error>).self) { group in
             for job in jobs {
@@ -182,10 +203,10 @@ final class LiveRepoStore: ObservableObject {
             }
         }
 
-        snapshots = ok.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-        loadError = failed.isEmpty ? nil
-            : "Couldn't load \(failed.sorted().joined(separator: ", ")) — pull to refresh to try again."
-        isLoading = false
+        assign(\.snapshots, ok.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending })
+        assign(\.loadError, failed.isEmpty ? nil
+            : "Couldn't load \(failed.sorted().joined(separator: ", ")) — pull to refresh to try again.")
+        assign(\.isLoading, false)
     }
 
     /// Only your own PRs get the extra reviewers/checks calls, to bound
@@ -231,6 +252,8 @@ final class LiveRepoStore: ObservableObject {
         } else if isStale(lastRepoDetailRefreshAt[repoID]) {
             Task { await refreshRepoDetailFirstPage(repoID: repoID) }
         }
+        // Keep "Only mine" fresh too, once it's been used for this repo.
+        if minePullRequests[repoID] != nil { beginMinePullRequests(repoID: repoID) }
     }
 
     /// A PR's screen appearing — first visit lazily loads its sections;
@@ -266,7 +289,7 @@ final class LiveRepoStore: ObservableObject {
     private func refreshRepoDetailFirstPage(repoID: RepoRef) async {
         guard !isRefreshingRepoDetail.contains(repoID), let (account, client) = resolve(repoID) else { return }
         if let warning = await rateLimitGuard(client, account: account) {
-            rateLimitWarning = warning
+            assign(\.rateLimitWarning, warning)
             return
         }
         isRefreshingRepoDetail.insert(repoID)
@@ -292,16 +315,16 @@ final class LiveRepoStore: ObservableObject {
                 }
                 return mapped
             }
-            detailPullRequests[repoID] = Self.mergeFirstPage(fresh, into: old, oldFirstPageCount: prs.items.count)
-            if (prPageCursor[repoID] ?? 0) <= 1 { hasMorePullRequests[repoID] = prs.hasNextPage }
+            assign(\.detailPullRequests[repoID], Self.mergeFirstPage(fresh, into: old, oldFirstPageCount: prs.items.count))
+            if (prPageCursor[repoID] ?? 0) <= 1 { assign(\.hasMorePullRequests[repoID], prs.hasNextPage) }
             prPageCursor[repoID] = max(prPageCursor[repoID] ?? 0, 1)
             Task { await loadCheckSummaries(repoID: repoID, numbers: fresh.map(\.id)) }
         }
         if let issues {
             let old = detailIssues[repoID] ?? []
             let fresh = issues.items.map(DisplayMapper.issue)
-            detailIssues[repoID] = Self.mergeFirstPage(fresh, into: old, oldFirstPageCount: fresh.count)
-            if (issuePageCursor[repoID] ?? 0) <= 1 { hasMoreIssues[repoID] = issues.hasNextPage }
+            assign(\.detailIssues[repoID], Self.mergeFirstPage(fresh, into: old, oldFirstPageCount: fresh.count))
+            if (issuePageCursor[repoID] ?? 0) <= 1 { assign(\.hasMoreIssues[repoID], issues.hasNextPage) }
             issuePageCursor[repoID] = max(issuePageCursor[repoID] ?? 0, 1)
         }
     }
@@ -318,10 +341,10 @@ final class LiveRepoStore: ObservableObject {
         guard isLoadingMorePullRequests[repoID] != true, hasMorePullRequests[repoID] != false,
               let (account, client) = resolve(repoID) else { return }
         if let warning = await rateLimitGuard(client, account: account) {
-            rateLimitWarning = warning
+            assign(\.rateLimitWarning, warning)
             return
         }
-        rateLimitWarning = nil
+        assign(\.rateLimitWarning, nil)
 
         isLoadingMorePullRequests[repoID] = true
         defer { isLoadingMorePullRequests[repoID] = false }
@@ -338,7 +361,59 @@ final class LiveRepoStore: ObservableObject {
             prPageCursor[repoID] = nextPage
         } catch {
             // A failed "load more" leaves whatever was already loaded in place.
-            loadError = Self.message(for: error, fallback: "Couldn't load more \(account.provider.pullRequestNoun)s.")
+            assign(\.loadError, Self.message(for: error, fallback: "Couldn't load more \(account.provider.pullRequestNoun)s."))
+        }
+    }
+
+    /// The "Only mine" list appearing — first time loads page one; coming
+    /// back to it once stale re-fetches page one (dropping extra pages).
+    func beginMinePullRequests(repoID: RepoRef) {
+        if minePullRequests[repoID] == nil {
+            lastMineRefreshAt[repoID] = Date()
+            Task { await loadMoreMinePullRequests(repoID: repoID) }
+        } else if isStale(lastMineRefreshAt[repoID]) {
+            lastMineRefreshAt[repoID] = Date()
+            Task { await loadMoreMinePullRequests(repoID: repoID, restart: true) }
+        }
+    }
+
+    func loadMoreMinePullRequests(repoID: RepoRef, restart: Bool = false) async {
+        guard isLoadingMoreMinePullRequests[repoID] != true,
+              restart || hasMoreMinePullRequests[repoID] != false,
+              let (account, client) = resolve(repoID) else { return }
+        if let warning = await rateLimitGuard(client, account: account) {
+            assign(\.rateLimitWarning, warning)
+            return
+        }
+        isLoadingMoreMinePullRequests[repoID] = true
+        defer { isLoadingMoreMinePullRequests[repoID] = false }
+
+        let nextPage = restart ? 1 : (minePageCursor[repoID] ?? 0) + 1
+        let path = repoID.path
+        let login = account.login
+        do {
+            let page = try await withRateLimitBackoff { try await client.pullRequests(repo: path, page: nextPage, author: login) }
+            let old = restart ? [] : (minePullRequests[repoID] ?? [])
+            // Keep lazily-loaded detail for PRs already open elsewhere.
+            let known = Dictionary((detailPullRequests[repoID] ?? []).map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+            let existingIDs = Set(old.map(\.id))
+            let fresh = page.items.map { item -> RepoPullRequest in
+                var mapped = DisplayMapper.pullRequest(item, login: login)
+                if let previous = known[mapped.id] {
+                    mapped.checksLabel = previous.checksLabel
+                    mapped.checksColor = previous.checksColor
+                    mapped.checks = previous.checks
+                    mapped.comments = previous.comments
+                    mapped.reviewers = previous.reviewers
+                }
+                return mapped
+            }.filter { !existingIDs.contains($0.id) }
+            assign(\.minePullRequests[repoID], old + fresh)
+            assign(\.hasMoreMinePullRequests[repoID], page.hasNextPage)
+            minePageCursor[repoID] = nextPage
+            Task { await loadCheckSummaries(repoID: repoID, numbers: fresh.map(\.id)) }
+        } catch {
+            assign(\.loadError, Self.message(for: error, fallback: "Couldn't load your \(account.provider.pullRequestNoun)s."))
         }
     }
 
@@ -346,10 +421,10 @@ final class LiveRepoStore: ObservableObject {
         guard isLoadingMoreIssues[repoID] != true, hasMoreIssues[repoID] != false,
               let (account, client) = resolve(repoID) else { return }
         if let warning = await rateLimitGuard(client, account: account) {
-            rateLimitWarning = warning
+            assign(\.rateLimitWarning, warning)
             return
         }
-        rateLimitWarning = nil
+        assign(\.rateLimitWarning, nil)
 
         isLoadingMoreIssues[repoID] = true
         defer { isLoadingMoreIssues[repoID] = false }
@@ -362,7 +437,7 @@ final class LiveRepoStore: ObservableObject {
             hasMoreIssues[repoID] = page.hasNextPage
             issuePageCursor[repoID] = nextPage
         } catch {
-            loadError = Self.message(for: error, fallback: "Couldn't load more issues.")
+            assign(\.loadError, Self.message(for: error, fallback: "Couldn't load more issues."))
         }
     }
 
@@ -372,10 +447,10 @@ final class LiveRepoStore: ObservableObject {
     func searchPullRequest(repoID: RepoRef, number: Int) async {
         guard isSearchingPR[repoID] != true, let (account, client) = resolve(repoID) else { return }
         if let warning = await rateLimitGuard(client, account: account) {
-            rateLimitWarning = warning
+            assign(\.rateLimitWarning, warning)
             return
         }
-        rateLimitWarning = nil
+        assign(\.rateLimitWarning, nil)
 
         isSearchingPR[repoID] = true
         prSearchError[repoID] = nil
@@ -392,18 +467,35 @@ final class LiveRepoStore: ObservableObject {
         }
     }
 
-    /// Opening a PR that only a number search found: the detail screen and
-    /// its lazy loads work off `detailPullRequests`, so the hit joins it.
-    func openSearchResult(repoID: RepoRef, prID: Int) {
-        guard let hit = prSearchResults[repoID], hit.id == prID,
-              detailPullRequests[repoID]?.contains(where: { $0.id == prID }) != true else { return }
-        detailPullRequests[repoID, default: []].append(hit)
+    /// Opening a PR that came from outside the main list (a number search,
+    /// the "Only mine" list): the detail screen and its lazy loads work off
+    /// `detailPullRequests`, so the PR joins it.
+    func adoptPullRequest(_ pr: RepoPullRequest, repoID: RepoRef) {
+        guard detailPullRequests[repoID]?.contains(where: { $0.id == pr.id }) != true else { return }
+        detailPullRequests[repoID, default: []].append(pr)
+    }
+
+    /// Makes sure one PR is in its repo's detail list — for opening it from
+    /// the inbox or an alert. Loads page one first (so the list isn't left
+    /// holding just this PR), then fetches the PR itself if it wasn't there.
+    func loadPullRequest(repoID: RepoRef, number: Int) async -> Bool {
+        if detailPullRequests[repoID] == nil { await loadMorePullRequests(repoID: repoID) }
+        if detailPullRequests[repoID]?.contains(where: { $0.id == number }) == true { return true }
+        guard let (account, client) = resolve(repoID) else { return false }
+        let path = repoID.path
+        guard let pr = try? await withRateLimitBackoff({ try await client.pullRequest(repo: path, number: number) })
+        else { return false }
+        if detailPullRequests[repoID]?.contains(where: { $0.id == number }) != true {
+            detailPullRequests[repoID, default: []].append(DisplayMapper.pullRequest(pr, login: account.login))
+        }
+        Task { await loadCheckSummaries(repoID: repoID, numbers: [number]) }
+        return true
     }
 
     /// Called when the search field empties — clears any stale hit/error.
     func clearPullRequestSearch(repoID: RepoRef) {
-        prSearchResults[repoID] = nil
-        prSearchError[repoID] = nil
+        assign(\.prSearchResults[repoID], nil)
+        assign(\.prSearchError[repoID], nil)
     }
 
     // MARK: - PR detail — checks, comments and reviewers, independently
@@ -470,10 +562,10 @@ final class LiveRepoStore: ObservableObject {
         guard isRefreshingPRDetail[key] != true, let (account, client) = resolve(repoID),
               let existing = detailPullRequests[repoID]?.first(where: { $0.id == prID }) else { return }
         if let warning = await rateLimitGuard(client, account: account) {
-            rateLimitWarning = warning
+            assign(\.rateLimitWarning, warning)
             return
         }
-        rateLimitWarning = nil
+        assign(\.rateLimitWarning, nil)
 
         isRefreshingPRDetail[key] = true
         defer { isRefreshingPRDetail[key] = false }
@@ -591,20 +683,33 @@ final class LiveRepoStore: ObservableObject {
                 $0.checksLabel = label
                 $0.checksColor = color
             }
-            if prSearchResults[repoID]?.id == number {
-                prSearchResults[repoID]?.checksLabel = label
-                prSearchResults[repoID]?.checksColor = color
+            if var hit = prSearchResults[repoID], hit.id == number {
+                hit.checksLabel = label
+                hit.checksColor = color
+                assign(\.prSearchResults[repoID], hit)
             }
         }
     }
 
     /// Re-locates by id rather than trusting a captured index — a
     /// concurrent refresh or page load could have mutated the array.
+    /// Applies to the PR wherever it's listed — the full list and "Only mine".
     private func updatePullRequest(repoID: RepoRef, prID: Int, _ mutate: (inout RepoPullRequest) -> Void) {
-        guard var list = detailPullRequests[repoID],
-              let index = list.firstIndex(where: { $0.id == prID }) else { return }
-        mutate(&list[index])
-        detailPullRequests[repoID] = list
+        if var list = detailPullRequests[repoID], let index = list.firstIndex(where: { $0.id == prID }) {
+            let before = list[index]
+            mutate(&list[index])
+            if list[index] != before { detailPullRequests[repoID] = list }
+        }
+        if var list = minePullRequests[repoID], let index = list.firstIndex(where: { $0.id == prID }) {
+            let before = list[index]
+            mutate(&list[index])
+            if list[index] != before { minePullRequests[repoID] = list }
+        }
+    }
+
+    /// Writes only when the value actually changed — see the class comment.
+    private func assign<Value: Equatable>(_ keyPath: ReferenceWritableKeyPath<LiveRepoStore, Value>, _ value: Value) {
+        if self[keyPath: keyPath] != value { self[keyPath: keyPath] = value }
     }
 
     // MARK: - Rate limiting

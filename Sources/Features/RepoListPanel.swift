@@ -11,12 +11,14 @@ enum RepoPanelMetrics {
 
 struct RepoListPanel: View {
     let repos: [RepoSnapshot]
+    /// Unread notification threads per repo — the badge on its icon.
+    var unreadCounts: [RepoRef: Int] = [:]
     var onSelect: (RepoSnapshot) -> Void = { _ in }
 
     var body: some View {
         VStack(spacing: RepoPanelMetrics.rowSpacing) {
             ForEach(repos) { repo in
-                RepoRow(snapshot: repo)
+                RepoRow(snapshot: repo, unread: unreadCounts[repo.id] ?? 0)
                     .onTapGesture { onSelect(repo) }
             }
         }
@@ -28,6 +30,7 @@ struct RepoListPanel: View {
 
 private struct RepoRow: View {
     let snapshot: RepoSnapshot
+    let unread: Int
 
     @State private var isHovered = false
 
@@ -42,6 +45,16 @@ private struct RepoRow: View {
                     .font(.system(size: 13))
                     .foregroundStyle(snapshot.state.color)
                     .frame(width: 32, height: 32)
+                if unread > 0 {
+                    Text(unread > 9 ? "9+" : "\(unread)")
+                        .font(.system(size: 8.5, weight: .bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 3)
+                        .frame(minWidth: 14, minHeight: 14)
+                        .background(Capsule().fill(Palette.accent))
+                        .offset(x: 5, y: -5)
+                        .accessibilityLabel("\(unread) unread notifications")
+                }
             }
 
             VStack(alignment: .leading, spacing: 2) {

@@ -8,6 +8,7 @@ enum AppearanceMode: String, CaseIterable, Identifiable {
     case system, light, dark
 
     static let defaultsKey = "gitbar.appearance"
+    static let solidBackgroundKey = "gitbar.solidBackground"
 
     var id: String { rawValue }
 
@@ -37,6 +38,8 @@ struct GeneralSettingsView: View {
     @ObservedObject var updater: AppUpdater
 
     @AppStorage(AppearanceMode.defaultsKey) private var appearance: AppearanceMode = .system
+    @AppStorage(AppearanceMode.solidBackgroundKey) private var solidBackground = false
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @AppStorage(RefreshScheduler.intervalKey) private var refreshInterval: Double = RefreshScheduler.defaultInterval
 
     private static let refreshOptions: [(label: String, seconds: Double)] = [
@@ -59,13 +62,22 @@ struct GeneralSettingsView: View {
 
     var body: some View {
         Form {
-            Section("Appearance") {
+            Section {
                 Picker("Theme", selection: $appearance) {
                     ForEach(AppearanceMode.allCases) { mode in
                         Text(mode.title).tag(mode)
                     }
                 }
                 .pickerStyle(.segmented)
+                Toggle("Solid background", isOn: reduceTransparency ? .constant(true) : $solidBackground)
+                    .disabled(reduceTransparency)
+            } header: {
+                Text("Appearance")
+            } footer: {
+                Text(reduceTransparency
+                     ? "On because Reduce transparency is enabled in System Settings › Accessibility › Display."
+                     : "Replaces the translucent glass behind the menu with a solid color — lighter on the graphics card.")
+                    .foregroundStyle(.secondary)
             }
 
             Section {

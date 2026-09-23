@@ -8,7 +8,10 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     private let statusItem: NSStatusItem
     private let popover = NSPopover()
     private let repoStore: LiveRepoStore
+    private let notificationStore: NotificationStore
     private let model: MenuViewModel
+    private let plainIcon: NSImage? = StatusItemController.makeIcon(badged: false)
+    private let badgedIcon: NSImage? = StatusItemController.makeIcon(badged: true)
     private var appearanceObservation: NSKeyValueObservation?
     private var refreshScheduler: RefreshScheduler?
 
@@ -17,19 +20,27 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         // The same store instances the Settings window edits — one source of truth.
         let settings = SettingsWindowController.shared
         repoStore = LiveRepoStore(accountStore: settings.accountStore, favoriteStore: settings.favoriteStore)
-        model = MenuViewModel(repoStore: repoStore)
+        notificationStore = settings.notificationStore
+        model = MenuViewModel(repoStore: repoStore, notificationStore: notificationStore)
         super.init()
 
         Task { await repoStore.refresh() }
+        Task {
+            // Accounts added before token checks existed get checked once.
+            await settings.accountStore.refreshMissingAccess()
+            notificationStore.startPolling()
+        }
+        notificationStore.alerter.onOpen = { [weak self] entryID, url in
+            self?.showPopover()
+            self?.model.openNotification(id: entryID, fallbackURL: url)
+        }
 
         if let button = statusItem.button {
-            button.image = NSImage(
-                systemSymbolName: "chevron.left.forwardslash.chevron.right",
-                accessibilityDescription: "gitbar"
-            )
+            button.image = plainIcon
             button.action = #selector(togglePopover)
             button.target = self
         }
+        observeUnreadBadge()
 
         let hosting = NSHostingController(rootView: MenuContentView(model: model))
         // Keeps `preferredContentSize` in sync from the first frame; otherwise
@@ -62,17 +73,54 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     }
 
     @objc private func togglePopover() {
-        guard let button = statusItem.button else { return }
         if popover.isShown {
             popover.performClose(nil)
         } else {
-            // No navigation reset: it reopens where it was left. An accessory
-            // app must activate first or the popover can layer behind others.
-            NSApp.activate(ignoringOtherApps: true)
-            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
-            // Throttled — a no-op if something refreshed in the last minute.
-            Task { await repoStore.refresh() }
+            showPopover()
         }
+    }
+
+    private func showPopover() {
+        guard let button = statusItem.button, !popover.isShown else { return }
+        // No navigation reset: it reopens where it was left. An accessory
+        // app must activate first or the popover can layer behind others.
+        NSApp.activate(ignoringOtherApps: true)
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        // Both throttled — no-ops if they refreshed recently.
+        Task { await repoStore.refresh() }
+        Task { await notificationStore.refresh() }
+    }
+
+    // MARK: - Menu bar icon
+
+    /// Re-arms after every change: `withObservationTracking` fires once.
+    private func observeUnreadBadge() {
+        withObservationTracking {
+            statusItem.button?.image = notificationStore.unreadCount > 0 ? badgedIcon : plainIcon
+        } onChange: { [weak self] in
+            Task { @MainActor in self?.observeUnreadBadge() }
+        }
+    }
+
+    /// Template image (macOS tints it like its own icons). The unread badge is
+    /// a dot cut out of the top-right corner, so it reads at any tint.
+    private static func makeIcon(badged: Bool) -> NSImage? {
+        guard let base = NSImage(named: "MenuBarIcon") else { return nil }
+        let size = NSSize(width: 18, height: 18)
+        let image = NSImage(size: size, flipped: false) { rect in
+            base.draw(in: rect)
+            guard badged else { return true }
+            let center = NSPoint(x: rect.maxX - 3.4, y: rect.maxY - 3.4)
+            NSGraphicsContext.current?.compositingOperation = .clear
+            NSBezierPath(ovalIn: NSRect(x: center.x - 4.4, y: center.y - 4.4, width: 8.8, height: 8.8)).fill()
+            NSGraphicsContext.current?.compositingOperation = .sourceOver
+            NSColor.black.setFill()
+            NSBezierPath(ovalIn: NSRect(x: center.x - 3, y: center.y - 3, width: 6, height: 6)).fill()
+            return true
+        }
+        image.isTemplate = true
+        image.accessibilityDescription = badged ? "gitbar — unread notifications" : "gitbar"
+        return image
     }
 
     /// No first responder at show time, so no stray focus ring. Done here

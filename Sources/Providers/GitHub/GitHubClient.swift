@@ -6,9 +6,15 @@ import Foundation
 /// status handling) are the shared `HTTPTransport`.
 actor GitHubClient: ProviderClient {
     nonisolated let kind = ProviderKind.github
-    nonisolated let capabilities = ProviderCapabilities(supportsRequestChanges: true)
+    nonisolated let capabilities = ProviderCapabilities(supportsRequestChanges: true, supportsNotifications: true)
 
     private let transport: HTTPTransport
+    /// Site root for building browser links ("https://github.com").
+    private let webBase: String
+    private let isFineGrainedToken: Bool
+    /// GraphQL search pages by cursor, the protocol by page number: the
+    /// cursor for page N+1 is remembered when page N arrives.
+    private var authorSearchCursors: [String: String] = [:]
     private let restBase: String
     private let graphQLURL: URL
 
@@ -19,6 +25,8 @@ actor GitHubClient: ProviderClient {
     private static let fullMediaType = ["Accept": "application/vnd.github.full+json"]
 
     init(host: String, token: String) {
+        webBase = "https://\(host)"
+        isFineGrainedToken = token.hasPrefix("github_pat_")
         // github.com's API lives on its own host; Enterprise Server serves it
         // under /api/v3 (REST) and /api/graphql on the instance itself.
         if host == "github.com" {
@@ -51,10 +59,10 @@ actor GitHubClient: ProviderClient {
 
     private struct GraphQLQuery: Encodable {
         let query: String
-        let variables: [String: String]
+        let variables: [String: String?]
     }
 
-    private func graphQL<T: Decodable>(_ query: String, variables: [String: String]) async throws -> T {
+    private func graphQL<T: Decodable>(_ query: String, variables: [String: String?]) async throws -> T {
         try await transport.send("POST", graphQLURL, body: GraphQLQuery(query: query, variables: variables))
     }
 
@@ -107,6 +115,65 @@ actor GitHubClient: ProviderClient {
     func pullRequest(repo: String, number: Int) async throws -> PullRequest {
         let pr: GitHubPullRequest = try await get("/repos/\(repo)/pulls/\(number)", headers: Self.fullMediaType).value
         return pr.domain
+    }
+
+    /// GitHub's REST PR list can't filter by author, so this is a GraphQL
+    /// search — one request that returns everything a PR row and screen need.
+    func pullRequests(repo: String, page: Int, author: String) async throws -> Page<PullRequest> {
+        let cursorKey = { (page: Int) in "\(repo)|\(author)|\(page)" }
+        let after: String? = page > 1 ? authorSearchCursors[cursorKey(page)] : nil
+        guard page == 1 || after != nil else { return Page(items: [], hasNextPage: false) }
+
+        struct Response: Decodable {
+            struct DataField: Decodable { let search: Search }
+            struct Search: Decodable { let pageInfo: PageInfo; let nodes: [Node] }
+            struct PageInfo: Decodable { let hasNextPage: Bool; let endCursor: String? }
+            struct Login: Decodable { let login: String? }
+            struct ReviewRequests: Decodable {
+                struct Request: Decodable { let requestedReviewer: Login? }
+                let nodes: [Request]
+            }
+            /// Search can match non-PR nodes; those decode with every field nil.
+            struct Node: Decodable {
+                let number: Int?
+                let title: String?
+                let isDraft: Bool?
+                let createdAt: Date?
+                let body: String?
+                let bodyHTML: String?
+                let headRefName: String?
+                let baseRefName: String?
+                let headRefOid: String?
+                let author: Login?
+                let reviewRequests: ReviewRequests?
+            }
+            let data: DataField?
+        }
+        let query = """
+        query($q: String!, $after: String) { search(query: $q, type: ISSUE, first: 20, after: $after) {
+          pageInfo { hasNextPage endCursor }
+          nodes { ... on PullRequest { number title isDraft createdAt body bodyHTML headRefName baseRefName headRefOid
+            author { login } reviewRequests(first: 20) { nodes { requestedReviewer { ... on User { login } } } } } } } }
+        """
+        let response: Response = try await graphQL(query, variables: [
+            "q": "repo:\(repo) is:pr is:open author:\(author) sort:created-desc",
+            "after": after,
+        ])
+        guard let search = response.data?.search else { return Page(items: [], hasNextPage: false) }
+        if search.pageInfo.hasNextPage, let end = search.pageInfo.endCursor {
+            authorSearchCursors[cursorKey(page + 1)] = end
+        }
+        let items = search.nodes.compactMap { node -> PullRequest? in
+            guard let number = node.number, let title = node.title, let createdAt = node.createdAt else { return nil }
+            return PullRequest(
+                number: number, title: title, author: node.author?.login ?? author,
+                isDraft: node.isDraft ?? false,
+                requestedReviewers: node.reviewRequests?.nodes.compactMap { $0.requestedReviewer?.login } ?? [],
+                sourceBranch: node.headRefName ?? "", targetBranch: node.baseRefName ?? "",
+                headSHA: node.headRefOid ?? "", body: node.body ?? "", bodyHTML: node.bodyHTML,
+                createdAt: createdAt)
+        }
+        return Page(items: items, hasNextPage: search.pageInfo.hasNextPage)
     }
 
     // MARK: - PR details
@@ -190,6 +257,34 @@ actor GitHubClient: ProviderClient {
 
     func rateLimitStatus() async -> RateLimitStatus? {
         await transport.lastKnownRateLimit
+    }
+
+    // MARK: - Token access
+
+    func tokenAccess() async throws -> TokenAccess {
+        let result: (value: GitHubUser, hasNextPage: Bool, response: HTTPURLResponse) =
+            try await transport.getWithResponse(url("/user"))
+        return GitHubMapping.tokenAccess(scopesHeader: result.response.value(forHTTPHeaderField: "X-OAuth-Scopes"),
+                                         isFineGrained: isFineGrainedToken)
+    }
+
+    // MARK: - Notifications
+
+    /// Unread threads (GitHub's default `all=false`). Unchanged inboxes come
+    /// back as ETag 304s, which don't count against the rate limit.
+    func notifications(participatingOnly: Bool) async throws -> InboxFetch {
+        let result: (value: [GitHubNotification], hasNextPage: Bool, response: HTTPURLResponse) =
+            try await transport.getWithResponse(url("/notifications?participating=\(participatingOnly)&per_page=50"))
+        let pollInterval = result.response.value(forHTTPHeaderField: "X-Poll-Interval").flatMap(TimeInterval.init)
+        return InboxFetch(items: result.value.map { $0.domain(webBase: webBase) }, pollInterval: pollInterval)
+    }
+
+    func markNotificationRead(id: String) async throws {
+        try await transport.sendEmpty("PATCH", url("/notifications/threads/\(id)"))
+    }
+
+    func markAllNotificationsRead() async throws {
+        try await transport.sendEmpty("PUT", url("/notifications"))
     }
 
     // MARK: - Helpers

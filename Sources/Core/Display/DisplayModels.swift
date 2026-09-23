@@ -23,7 +23,9 @@ extension RepoActivityState {
 }
 
 struct PRCheck: Identifiable, Equatable {
-    let id = UUID()
+    /// Content-derived, not random: a re-fetch of the same checks must
+    /// compare equal, or every refresh would redraw the PR screen.
+    let id: String
     let name: String
     let passed: Bool
     /// The CI run page; no "Details" link when `nil`.
@@ -58,7 +60,8 @@ extension ReviewState {
 }
 
 struct PRComment: Identifiable, Equatable {
-    let id = UUID()
+    /// Content-derived for the same reason as `PRCheck.id`.
+    let id: String
     let author: String
     let initials: String
     let timeAgo: String

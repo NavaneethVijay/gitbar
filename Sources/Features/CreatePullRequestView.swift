@@ -25,9 +25,6 @@ struct CreatePullRequestView: View {
     @State private var isCreating = false
     @State private var createError: String?
 
-    /// Keeps a long description from growing the popover past the screen.
-    private static let formMaxHeight: CGFloat = 420
-
     private var trimmedTitle: String { title.trimmingCharacters(in: .whitespacesAndNewlines) }
 
     private var validationMessage: String? {
@@ -100,11 +97,12 @@ struct CreatePullRequestView: View {
                 .padding(14)
                 .disabled(isCreating)
             }
-            .frame(maxHeight: Self.formMaxHeight)
+            .frame(maxHeight: .infinity)
 
             footer
         }
-        .frame(width: PRDetailMetrics.width)
+        // Same fixed size as the PR screen, so the popover doesn't resize.
+        .frame(width: PRDetailMetrics.width, height: PRDetailMetrics.height, alignment: .top)
         .task { await load() }
     }
 

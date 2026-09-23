@@ -33,7 +33,74 @@ extension GitHubComment {
     }
 }
 
+extension GitHubNotification {
+    /// `webBase` is the instance's site root ("https://github.com").
+    func domain(webBase: String) -> InboxItem {
+        let repo = repository.fullName
+        let lastComponent = subject.url?.lastPathComponent
+        let number = lastComponent.flatMap(Int.init)
+        let kind: InboxItem.Kind
+        let path: String
+        switch subject.type {
+        case "PullRequest":
+            kind = .pullRequest; path = number.map { "/pull/\($0)" } ?? "/pulls"
+        case "Issue":
+            kind = .issue; path = number.map { "/issues/\($0)" } ?? "/issues"
+        case "Release":
+            kind = .release; path = "/releases"
+        case "Discussion":
+            kind = .discussion; path = number.map { "/discussions/\($0)" } ?? "/discussions"
+        case "Commit":
+            kind = .commit; path = lastComponent.map { "/commit/\($0)" } ?? ""
+        case "CheckSuite":
+            kind = .checkSuite; path = "/actions"
+        default:
+            kind = .other(subject.type); path = ""
+        }
+        return InboxItem(
+            id: id, repoPath: repo, title: subject.title, kind: kind,
+            number: (kind == .pullRequest || kind == .issue || kind == .discussion) ? number : nil,
+            reason: InboxItem.Reason(rawValue: reason) ?? .other,
+            isUnread: unread, updatedAt: updatedAt,
+            webURL: URL(string: "\(webBase)/\(repo)\(path)")
+        )
+    }
+}
+
 enum GitHubMapping {
+    /// Classic tokens list their scopes in `X-OAuth-Scopes`; fine-grained
+    /// ones (`github_pat_…`) don't, and can't read notifications at all.
+    static func tokenAccess(scopesHeader: String?, isFineGrained: Bool) -> TokenAccess {
+        guard let scopesHeader, !isFineGrained else {
+            return TokenAccess(
+                tokenKind: isFineGrained ? "Fine-grained token" : "Token",
+                readRepositories: .unknown, writePullRequests: .unknown, notifications: .no,
+                notes: [
+                    "readRepositories": "Set per repository in the token's settings.",
+                    "writePullRequests": "Needs \u{201C}Pull requests: Read and write\u{201D} on each repository.",
+                    "notifications": "GitHub doesn't let fine-grained tokens read notifications. Use a classic token with the notifications (or repo) scope.",
+                ])
+        }
+        let scopes = scopesHeader.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        let hasRepo = scopes.contains("repo")
+        let hasPublicRepo = scopes.contains("public_repo")
+        var notes: [String: String] = [:]
+        if !hasRepo {
+            notes["readRepositories"] = "Public repositories only — add the repo scope for private ones."
+            notes["writePullRequests"] = hasPublicRepo
+                ? "Public repositories only — add the repo scope for private ones."
+                : "Add the repo (or public_repo) scope to review and open pull requests."
+        }
+        let notificationsOK = hasRepo || scopes.contains("notifications")
+        if !notificationsOK { notes["notifications"] = "Add the notifications scope to this token." }
+        return TokenAccess(
+            tokenKind: "Classic token",
+            readRepositories: .yes,
+            writePullRequests: (hasRepo || hasPublicRepo) ? .yes : .no,
+            notifications: notificationsOK ? .yes : .no,
+            notes: notes, scopes: scopes)
+    }
+
     /// GitHub tracks "who's asked to review" and "who's reviewed" as two
     /// separate lists that can both mention the same person — someone can be
     /// re-requested after already approving once, in which case GitHub's own
@@ -108,10 +175,15 @@ enum GitHubMapping {
     @Sendable static func classifyError(_ response: HTTPURLResponse, _ data: Data) -> ProviderError? {
         switch response.statusCode {
         case 403:
-            // A `Retry-After` header means the secondary (abuse-detection)
-            // limit; without one, the primary hourly quota.
+            // Only a rate limit when GitHub says so: `Retry-After` (secondary
+            // limit) or an exhausted primary quota. Otherwise it's a permission
+            // problem (missing scope, fine-grained token) — not worth a retry.
             let retryAfter = response.value(forHTTPHeaderField: "Retry-After").flatMap(TimeInterval.init)
-            return .rateLimited(.github, retryAfter: retryAfter)
+            if retryAfter != nil || response.value(forHTTPHeaderField: "X-RateLimit-Remaining") == "0" {
+                return .rateLimited(.github, retryAfter: retryAfter)
+            }
+            let message = (try? JSONDecoder().decode(GitHubErrorBody.self, from: data))?.message
+            return .forbidden(.github, message)
         case 422:
             // A write GitHub rejected on its merits (self-approval, no commits
             // between branches, a PR already open…) — worth showing verbatim.

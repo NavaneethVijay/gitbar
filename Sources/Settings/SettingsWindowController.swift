@@ -11,12 +11,14 @@ final class SettingsWindowController: NSWindowController {
     let accountStore = AccountStore()
     let favoriteStore = FavoriteRepoStore()
     let updater = AppUpdater()
+    private(set) lazy var notificationStore = NotificationStore(accountStore: accountStore)
 
     private convenience init() {
         self.init(window: nil)
 
         let hosting = NSHostingController(
-            rootView: SettingsView(accountStore: accountStore, favoriteStore: favoriteStore, updater: updater)
+            rootView: SettingsView(accountStore: accountStore, favoriteStore: favoriteStore, updater: updater,
+                                   notificationStore: notificationStore)
         )
         // The window owns its size: with the default options, switching detail
         // screens in the NavigationSplitView wedged layout and blanked the window.

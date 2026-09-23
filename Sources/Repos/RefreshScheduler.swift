@@ -61,7 +61,9 @@ final class RefreshScheduler {
         loop = Task { [weak self] in
             var delay = initialDelay ?? interval
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(delay))
+                // Tolerance lets macOS coalesce this wakeup with other apps'
+                // (fewer CPU wakes on battery); a few seconds either way is fine.
+                try? await Task.sleep(for: .seconds(delay), tolerance: .seconds(max(1, delay * 0.1)))
                 guard !Task.isCancelled, let self else { return }
                 if !ProcessInfo.processInfo.isLowPowerModeEnabled {
                     await self.tick()

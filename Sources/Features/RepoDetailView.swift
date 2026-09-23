@@ -5,6 +5,10 @@ import SwiftUI
 
 enum RepoDetailMetrics {
     static let width: CGFloat = 320
+    /// Fixed, not content-sized: the popover window follows its content, and
+    /// resizing it on every list load / CI label / tab switch made the whole
+    /// screen flicker. The list scrolls inside instead.
+    static let height: CGFloat = 556
     static let headerHeight: CGFloat = 52
     static let tabsHeight: CGFloat = 38
     static let rowHeight: CGFloat = 76
@@ -30,16 +34,28 @@ struct RepoDetailView: View {
     var onLoadMoreIssues: () -> Void = {}
     /// A PR fetched by number because it wasn't in the loaded pages.
     var prSearchResult: RepoPullRequest?
+    /// The account's own login — what "Only mine" filters on.
+    var currentLogin: String?
     var isSearchingPR = false
     var prSearchError: String?
     var onSearchPR: (Int) -> Void = { _ in }
     var onClearPRSearch: () -> Void = {}
     var onBack: () -> Void = {}
+    /// "Only mine", fetched server-side (`nil` until the first page arrives).
+    var minePullRequests: [RepoPullRequest]?
+    var hasMoreMinePullRequests = false
+    var isLoadingMoreMinePullRequests = false
+    var onShowMine: () -> Void = {}
+    var onLoadMoreMine: () -> Void = {}
     var onSelectPR: (RepoPullRequest) -> Void = { _ in }
     var onCreatePR: () -> Void = {}
 
     @State private var selectedTab: DetailTab = .pullRequests
     @State private var searchText = ""
+    /// Remembered across repos and launches.
+    @AppStorage("gitbar.prList.onlyMine") private var onlyMine = false
+
+    private var isFilteringMine: Bool { onlyMine && currentLogin != nil }
 
     private var displayedPRs: [RepoPullRequest] { pullRequests ?? repo.pullRequests }
     private var displayedIssues: [RepoIssue] { issues ?? repo.issues }
@@ -49,16 +65,16 @@ struct RepoDetailView: View {
 
     /// Everything loaded, or — while a number is typed — just that PR (a
     /// local hit first, else the direct-fetch result).
+    /// A number search finds that PR in the full list regardless of "Only
+    /// mine"; otherwise the list is the full one or the server-side "mine" one.
     private var filteredPRs: [RepoPullRequest] {
-        guard let number = searchNumber else { return displayedPRs }
+        guard let number = searchNumber else {
+            return isFilteringMine ? (minePullRequests ?? []) : displayedPRs
+        }
         if let local = displayedPRs.first(where: { $0.id == number }) { return [local] }
         if let remote = prSearchResult, remote.id == number { return [remote] }
         return []
     }
-
-    /// The popover sizes itself to its content, so the list must be capped
-    /// or "Load more" would grow it past the screen.
-    private static let listMaxHeight: CGFloat = 420
 
     var body: some View {
         VStack(spacing: 0) {
@@ -69,7 +85,8 @@ struct RepoDetailView: View {
             }
 
             ScrollView {
-                VStack(spacing: RepoDetailMetrics.rowSpacing) {
+                // Lazy: after a few "Load more" pages there can be hundreds of rows.
+                LazyVStack(spacing: RepoDetailMetrics.rowSpacing) {
                     switch selectedTab {
                     case .pullRequests:
                         if let number = searchNumber, filteredPRs.isEmpty {
@@ -90,11 +107,29 @@ struct RepoDetailView: View {
                                     .padding(.vertical, 20)
                             }
                         } else {
+                            if searchNumber == nil, isFilteringMine, minePullRequests == nil {
+                                HStack(spacing: 6) {
+                                    ProgressView().controlSize(.small).scaleEffect(0.7)
+                                    Text("Loading your \(repo.provider.pullRequestShort)s…")
+                                        .font(.system(size: 11.5))
+                                        .foregroundStyle(Palette.textTertiary)
+                                }
+                                .padding(.vertical, 20)
+                            } else if searchNumber == nil, isFilteringMine, filteredPRs.isEmpty {
+                                Text("You have no open \(repo.provider.pullRequestNoun)s here.")
+                                    .font(.system(size: 11.5))
+                                    .foregroundStyle(Palette.textTertiary)
+                                    .padding(.vertical, 20)
+                            }
                             ForEach(filteredPRs) { pr in
                                 PullRequestRow(pr: pr, provider: repo.provider, onSelect: { onSelectPR(pr) })
                             }
-                            if searchNumber == nil, hasMorePullRequests {
-                                LoadMoreRow(isLoading: isLoadingMorePullRequests, action: onLoadMorePullRequests)
+                            if searchNumber == nil {
+                                if isFilteringMine, hasMoreMinePullRequests {
+                                    LoadMoreRow(isLoading: isLoadingMoreMinePullRequests, action: onLoadMoreMine)
+                                } else if !isFilteringMine, hasMorePullRequests {
+                                    LoadMoreRow(isLoading: isLoadingMorePullRequests, action: onLoadMorePullRequests)
+                                }
                             }
                         }
                     case .issues:
@@ -116,9 +151,14 @@ struct RepoDetailView: View {
                 .padding(.vertical, RepoDetailMetrics.verticalPadding)
                 .padding(.horizontal, 10)
             }
-            .frame(maxHeight: Self.listMaxHeight)
+            .frame(maxHeight: .infinity)
         }
-        .frame(width: RepoDetailMetrics.width)
+        .frame(width: RepoDetailMetrics.width, height: RepoDetailMetrics.height, alignment: .top)
+        // Ticking "Only mine" (or opening a repo with it already on) asks the
+        // provider for just your PRs.
+        .task(id: isFilteringMine) {
+            if isFilteringMine { onShowMine() }
+        }
         // `.task(id:)` cancels the previous run on each keystroke — a debounce.
         .task(id: searchText) {
             guard let number = searchNumber else {
@@ -133,6 +173,21 @@ struct RepoDetailView: View {
     }
 
     private var searchField: some View {
+        HStack(spacing: 10) {
+            searchBox
+            Toggle("Only mine", isOn: $onlyMine)
+                .toggleStyle(.checkbox)
+                .font(.system(size: 11))
+                .foregroundStyle(Palette.textSecondary)
+                .disabled(currentLogin == nil)
+                .help(currentLogin.map { "Only \(repo.provider.pullRequestShort)s opened by @\($0)" } ?? "")
+                .fixedSize()
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 8)
+    }
+
+    private var searchBox: some View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
                 .font(.system(size: 11))
@@ -159,8 +214,6 @@ struct RepoDetailView: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 6)
         .background(RoundedRectangle(cornerRadius: 6).fill(Palette.wash.opacity(0.06)))
-        .padding(.horizontal, 12)
-        .padding(.top, 8)
     }
 
     private var header: some View {
@@ -200,7 +253,9 @@ struct RepoDetailView: View {
     private var tabs: some View {
         HStack(spacing: 16) {
             // Counts reflect the pages loaded so far ("+" while there's more).
-            TabLabel("\(repo.provider.pullRequestsTitle) \(displayedPRs.count)\(hasMorePullRequests ? "+" : "")",
+            TabLabel(isFilteringMine
+                     ? "\(repo.provider.pullRequestsTitle) \(minePullRequests?.count ?? 0)\(hasMoreMinePullRequests ? "+" : "")"
+                     : "\(repo.provider.pullRequestsTitle) \(displayedPRs.count)\(hasMorePullRequests ? "+" : "")",
                     isSelected: selectedTab == .pullRequests) {
                 selectedTab = .pullRequests
             }

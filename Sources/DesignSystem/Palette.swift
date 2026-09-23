@@ -46,17 +46,41 @@ enum Palette {
     static let neutral        = Color(nsColor: .secondaryLabelColor)
 }
 
-extension View {
-    /// A floating capsule (toasts): real Liquid Glass on macOS 26, the
-    /// closest system material on earlier releases.
-    @ViewBuilder
-    func floatingCapsule() -> some View {
-        if #available(macOS 26.0, *) {
-            glassEffect(.regular, in: .capsule)
+/// Whether to skip translucency: the user's "Solid background" setting, or
+/// the system's Reduce Transparency. Translucent surfaces make the window
+/// server re-blur whatever is behind them on every frame — real GPU work on
+/// older Macs.
+struct SolidBackgroundReader: DynamicProperty {
+    @AppStorage(AppearanceMode.solidBackgroundKey) private var solidSetting = false
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    var isSolid: Bool { solidSetting || reduceTransparency }
+}
+
+private struct FloatingCapsule: ViewModifier {
+    private var background = SolidBackgroundReader()
+
+    func body(content: Content) -> some View {
+        if background.isSolid {
+            content
+                .background(Color(nsColor: .windowBackgroundColor), in: .capsule)
+                .overlay(Capsule().strokeBorder(.separator))
+                .shadow(color: .black.opacity(0.2), radius: 8, y: 2)
+        } else if #available(macOS 26.0, *) {
+            content.glassEffect(.regular, in: .capsule)
         } else {
-            background(.regularMaterial, in: .capsule)
+            content
+                .background(.regularMaterial, in: .capsule)
                 .overlay(Capsule().strokeBorder(.separator))
                 .shadow(color: .black.opacity(0.2), radius: 8, y: 2)
         }
+    }
+}
+
+extension View {
+    /// A floating capsule (toasts): Liquid Glass on macOS 26, the closest
+    /// material before that, and opaque when translucency is off.
+    func floatingCapsule() -> some View {
+        modifier(FloatingCapsule())
     }
 }

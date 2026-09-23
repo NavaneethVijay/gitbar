@@ -7,9 +7,11 @@ struct SettingsView: View {
     @ObservedObject var accountStore: AccountStore
     @ObservedObject var favoriteStore: FavoriteRepoStore
     let updater: AppUpdater
+    let notificationStore: NotificationStore
 
     private enum Selection: Hashable {
         case general
+        case notifications
         case account(UUID)
         case addAccount(ProviderKind)
         case comingSoon(ProviderKind)
@@ -47,6 +49,8 @@ struct SettingsView: View {
         List(selection: $selection) {
             Label("General", systemImage: "gearshape")
                 .tag(Selection.general)
+            Label("Notifications", systemImage: "bell.badge")
+                .tag(Selection.notifications)
             // Providers as full rows with accounts nested beneath (Internet Accounts style).
             Section("Accounts") {
                 ForEach(ProviderKind.allCases) { provider in
@@ -84,6 +88,8 @@ struct SettingsView: View {
         switch selection {
         case .general:
             GeneralSettingsView(updater: updater)
+        case .notifications:
+            NotificationsSettingsView(accountStore: accountStore, notificationStore: notificationStore)
         case .account(let id):
             if let account = accountStore.accounts.first(where: { $0.id == id }) {
                 AccountDetailView(account: account, accountStore: accountStore, favoriteStore: favoriteStore)
@@ -345,6 +351,8 @@ private struct AccountDetailView: View {
                 accountHeader
             }
 
+            TokenAccessSection(account: account, accountStore: accountStore)
+
             Section {
                 if let errorMessage {
                     Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
@@ -457,5 +465,77 @@ private struct AccountDetailView: View {
             }
             isLoading = false
         }
+    }
+}
+
+// MARK: - Token access
+
+/// What this account's token can do, from `AccountStore.refreshAccess` —
+/// checked when the account was added, re-checkable after editing scopes.
+private struct TokenAccessSection: View {
+    let account: Account
+    @ObservedObject var accountStore: AccountStore
+    @State private var isChecking = false
+
+    var body: some View {
+        Section {
+            if let access = account.access {
+                AccessRow(title: "Read repositories", level: access.readRepositories, note: access.notes["readRepositories"])
+                AccessRow(title: "Review & create pull requests", level: access.writePullRequests, note: access.notes["writePullRequests"])
+                AccessRow(title: "Notifications", level: access.notifications, note: access.notes["notifications"])
+            } else {
+                Text(isChecking ? "Checking…" : "Not checked yet.")
+                    .foregroundStyle(.secondary)
+            }
+        } header: {
+            HStack {
+                Text("Token access")
+                Spacer()
+                if isChecking {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Button("Re-check") { recheck() }
+                        .buttonStyle(.link)
+                        .font(.caption)
+                }
+            }
+        } footer: {
+            if let access = account.access {
+                Text(access.scopes.isEmpty ? access.tokenKind : "\(access.tokenKind) · scopes: \(access.scopes.joined(separator: ", "))")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .task(id: account.id) {
+            if account.access == nil { recheck() }
+        }
+    }
+
+    private func recheck() {
+        guard !isChecking else { return }
+        isChecking = true
+        Task {
+            await accountStore.refreshAccess(for: account)
+            isChecking = false
+        }
+    }
+}
+
+private struct AccessRow: View {
+    let title: String
+    let level: TokenAccess.Level
+    let note: String?
+
+    var body: some View {
+        LabeledContent {
+            switch level {
+            case .yes: Label("Allowed", systemImage: "checkmark.circle.fill").foregroundStyle(.green)
+            case .no: Label("Not allowed", systemImage: "xmark.circle.fill").foregroundStyle(.red)
+            case .unknown: Label("Depends", systemImage: "questionmark.circle.fill").foregroundStyle(.orange)
+            }
+        } label: {
+            Text(title)
+            if let note { Text(note) }
+        }
+        .labelStyle(.titleAndIcon)
     }
 }

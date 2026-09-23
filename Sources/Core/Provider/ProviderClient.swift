@@ -26,6 +26,9 @@ protocol ProviderClient: Actor {
     func pullRequests(repo: String, page: Int) async throws -> Page<PullRequest>
     func issues(repo: String, page: Int) async throws -> Page<Issue>
     func pullRequest(repo: String, number: Int) async throws -> PullRequest
+    /// Open PRs by one author, paged like `pullRequests(repo:page:)` — the
+    /// repo screen's "Only mine" filter, done server-side.
+    func pullRequests(repo: String, page: Int, author: String) async throws -> Page<PullRequest>
 
     // One PR's details.
     /// Combined CI result per PR, for a whole page at once — ideally one
@@ -45,4 +48,12 @@ protocol ProviderClient: Actor {
     /// The last budget seen on a response, `nil` before the first request
     /// (or for a provider that doesn't report one).
     func rateLimitStatus() async -> RateLimitStatus?
+
+    /// What this token can do — see `TokenAccess`.
+    func tokenAccess() async throws -> TokenAccess
+
+    // Notifications (only called when `capabilities.supportsNotifications`).
+    func notifications(participatingOnly: Bool) async throws -> InboxFetch
+    func markNotificationRead(id: String) async throws
+    func markAllNotificationsRead() async throws
 }

@@ -21,19 +21,44 @@ final class AccountStore: ObservableObject {
     @discardableResult
     func addAccount(provider: ProviderKind, host rawHost: String, token: String) async throws -> Account {
         let host = provider.normalizeHost(rawHost)
-        let profile = try await ProviderRegistry.makeClient(kind: provider, host: host, token: token).validate()
-        if let existing = accounts.first(where: {
+        let client = try ProviderRegistry.makeClient(kind: provider, host: host, token: token)
+        let profile = try await client.validate()
+        // Best-effort: an account works without it; Settings can re-check.
+        let access = try? await client.tokenAccess()
+        if let index = accounts.firstIndex(where: {
             $0.provider == provider && $0.host == host && $0.login == profile.login
         }) {
-            KeychainStore.store(token: token, for: existing.id.uuidString)
-            return existing
+            KeychainStore.store(token: token, for: accounts[index].id.uuidString)
+            accounts[index].access = access
+            persist()
+            return accounts[index]
         }
         let account = Account(id: UUID(), provider: provider, host: host, login: profile.login,
-                              name: profile.name, avatarURL: profile.avatarURL)
+                              name: profile.name, avatarURL: profile.avatarURL, access: access)
         KeychainStore.store(token: token, for: account.id.uuidString)
         accounts.append(account)
         persist()
         return account
+    }
+
+    /// Re-reads what the token can do (e.g. after editing its scopes on the
+    /// provider's site) — and fills it in for accounts added before this existed.
+    @discardableResult
+    func refreshAccess(for account: Account) async -> TokenAccess? {
+        guard let client = client(for: account), let access = try? await client.tokenAccess(),
+              let index = accounts.firstIndex(where: { $0.id == account.id }) else { return nil }
+        if accounts[index].access != access {
+            accounts[index].access = access
+            persist()
+        }
+        return access
+    }
+
+    /// Checks every account that hasn't been checked yet — once at launch.
+    func refreshMissingAccess() async {
+        for account in accounts where account.access == nil {
+            await refreshAccess(for: account)
+        }
     }
 
     func removeAccount(_ account: Account) {

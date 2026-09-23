@@ -150,4 +150,72 @@ struct RateLimitStatus: Equatable, Sendable {
 /// every provider has a separate "request changes" review verdict.
 struct ProviderCapabilities: Sendable {
     var supportsRequestChanges = true
+    var supportsNotifications = false
+}
+
+/// What one account's token is actually allowed to do, as far as the
+/// provider reveals — checked when the account is added (and on demand).
+struct TokenAccess: Codable, Equatable, Sendable {
+    enum Level: String, Codable, Sendable {
+        case yes
+        case no
+        /// The provider doesn't say up front (e.g. fine-grained tokens,
+        /// whose permissions are per repository).
+        case unknown
+    }
+
+    /// e.g. "Classic token" / "Fine-grained token".
+    var tokenKind: String
+    var readRepositories: Level
+    var writePullRequests: Level
+    var notifications: Level
+    /// Why a level is what it is, keyed by the same names — shown in Settings.
+    var notes: [String: String] = [:]
+    /// Raw scopes, when the provider lists them.
+    var scopes: [String] = []
+}
+
+// MARK: - Notifications
+
+/// One inbox thread — a PR, issue, release… something happened on.
+struct InboxItem: Identifiable, Equatable, Sendable {
+    enum Kind: Equatable, Sendable {
+        case pullRequest, issue, release, discussion, commit, checkSuite
+        case other(String)
+    }
+
+    /// Why it's in the inbox. Raw values double as settings keys.
+    enum Reason: String, CaseIterable, Sendable {
+        case reviewRequested = "review_requested"
+        case mention
+        case teamMention = "team_mention"
+        case assign
+        case author
+        case comment
+        case ciActivity = "ci_activity"
+        case stateChange = "state_change"
+        case subscribed
+        case manual
+        case securityAlert = "security_alert"
+        case other
+    }
+
+    /// The provider's thread id — what "mark read" takes.
+    let id: String
+    let repoPath: String
+    let title: String
+    let kind: Kind
+    /// PR/issue number, when the subject has one.
+    let number: Int?
+    let reason: Reason
+    let isUnread: Bool
+    let updatedAt: Date
+    /// Where to open it in a browser.
+    let webURL: URL?
+}
+
+struct InboxFetch: Sendable {
+    let items: [InboxItem]
+    /// The provider's requested minimum seconds between polls, if it sent one.
+    let pollInterval: TimeInterval?
 }

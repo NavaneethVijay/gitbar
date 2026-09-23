@@ -14,6 +14,9 @@ enum ProviderError: Error, LocalizedError {
     /// The provider rejected a write and said why (e.g. "Can not approve
     /// your own pull request") — shown verbatim.
     case validationFailed(String)
+    /// The token is valid but not allowed to do this (missing scope, or a
+    /// fine-grained token without that permission). Provider's own message.
+    case forbidden(ProviderKind, String?)
     /// No module exists for this provider yet.
     case unsupported(ProviderKind)
     /// The account (or its stored token) is gone — disconnected meanwhile.
@@ -35,6 +38,10 @@ enum ProviderError: Error, LocalizedError {
             return "\(kind.displayName) returned an unexpected response (HTTP \(code))."
         case .validationFailed(let message):
             return message
+        case .forbidden(let kind, let message?):
+            return "\(kind.displayName) refused this token: \(message)"
+        case .forbidden(let kind, nil):
+            return "This token doesn't have permission for that on \(kind.displayName)."
         case .unsupported(let kind):
             return "\(kind.displayName) isn't supported yet."
         case .accountUnavailable:

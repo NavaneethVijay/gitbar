@@ -166,3 +166,28 @@ struct GitHubErrorBody: Decodable {
         }
     }
 }
+
+struct GitHubNotification: Decodable {
+    struct Subject: Decodable {
+        let title: String
+        /// API URL of the subject (PR, issue, release…); `nil` for some types.
+        let url: URL?
+        let type: String
+    }
+    struct Repository: Decodable {
+        let fullName: String
+        enum CodingKeys: String, CodingKey { case fullName = "full_name" }
+    }
+
+    let id: String
+    let unread: Bool
+    let reason: String
+    let updatedAt: Date
+    let subject: Subject
+    let repository: Repository
+
+    enum CodingKeys: String, CodingKey {
+        case id, unread, reason, subject, repository
+        case updatedAt = "updated_at"
+    }
+}

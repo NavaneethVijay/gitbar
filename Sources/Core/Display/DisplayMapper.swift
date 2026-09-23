@@ -47,11 +47,13 @@ enum DisplayMapper {
     }
 
     static func check(_ run: CheckRun) -> PRCheck {
-        PRCheck(name: run.name, passed: run.passed, detailsURL: run.detailsURL)
+        PRCheck(id: run.name + "|" + (run.detailsURL?.absoluteString ?? ""),
+                name: run.name, passed: run.passed, detailsURL: run.detailsURL)
     }
 
     static func comment(_ comment: Comment) -> PRComment {
-        PRComment(author: comment.author, initials: initials(for: comment.author),
+        PRComment(id: "\(comment.author)|\(comment.createdAt.timeIntervalSince1970)",
+                  author: comment.author, initials: initials(for: comment.author),
                   timeAgo: relativeTime(from: comment.createdAt), text: comment.body, htmlText: comment.bodyHTML)
     }
 

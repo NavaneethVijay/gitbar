@@ -5,6 +5,9 @@ import SwiftUI
 
 enum PRDetailMetrics {
     static let width: CGFloat = 380
+    /// Fixed for the same reason as `RepoDetailMetrics.height`; the body
+    /// scrolls between the pinned header and composer.
+    static let height: CGFloat = 620
 }
 
 struct PRDetailView: View {
@@ -27,17 +30,13 @@ struct PRDetailView: View {
     @State private var reviewDraft = ""
     @State private var showReviewSubmittedToast = false
 
-    /// Caps the popover's height (it sizes to content); header and composer
-    /// stay pinned outside the scroll area.
-    private static let scrollMaxHeight: CGFloat = 420
-
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
             divider
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
+                LazyVStack(alignment: .leading, spacing: 0) {
                     metaRow
                     divider
                     branchRow
@@ -51,12 +50,12 @@ struct PRDetailView: View {
                     commentsSection
                 }
             }
-            .frame(maxHeight: Self.scrollMaxHeight)
+            .frame(maxHeight: .infinity)
 
             divider
             composer
         }
-        .frame(width: PRDetailMetrics.width)
+        .frame(width: PRDetailMetrics.width, height: PRDetailMetrics.height, alignment: .top)
         .overlay(alignment: .top) {
             if showReviewSubmittedToast {
                 ReviewSubmittedToast()
@@ -214,7 +213,7 @@ struct PRDetailView: View {
                     .font(.system(size: 11.5))
                     .foregroundStyle(Palette.textTertiary)
             } else {
-                VStack(alignment: .leading, spacing: 12) {
+                LazyVStack(alignment: .leading, spacing: 12) {
                     ForEach(pr.comments) { comment in
                         CommentBubble(comment: comment)
                     }

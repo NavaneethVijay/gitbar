@@ -6,6 +6,16 @@ import SwiftUI
 struct RichText: NSViewRepresentable {
     let attributedString: NSAttributedString
 
+    /// Last measurement: SwiftUI asks for the size on every layout pass, and
+    /// each answer otherwise costs a full text layout.
+    final class Coordinator {
+        var measuredWidth: CGFloat = -1
+        var measuredText: NSAttributedString?
+        var measuredHeight: CGFloat = 0
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
     func makeNSView(context: Context) -> NSTextView {
         let textView = LinkCursorTextView()
         textView.isEditable = false
@@ -23,12 +33,20 @@ struct RichText: NSViewRepresentable {
     }
 
     func updateNSView(_ textView: NSTextView, context: Context) {
-        textView.textStorage?.setAttributedString(attributedString)
+        // SwiftUI calls this on every redraw of the parent; resetting identical
+        // text forces a full re-layout + repaint, which shows as flicker.
+        guard let storage = textView.textStorage, !storage.isEqual(to: attributedString) else { return }
+        storage.setAttributedString(attributedString)
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSTextView, context: Context) -> CGSize? {
         guard let width = proposal.width, width.isFinite, width > 0, let container = nsView.textContainer,
               let layoutManager = nsView.layoutManager else { return nil }
+        let cache = context.coordinator
+        if cache.measuredWidth == width, let text = cache.measuredText,
+           text === attributedString || text.isEqual(to: attributedString) {
+            return CGSize(width: width, height: cache.measuredHeight)
+        }
         container.containerSize = CGSize(width: width, height: .greatestFiniteMagnitude)
         layoutManager.ensureLayout(for: container)
         // `usedRect` reports zero height across `NSTextTable` blocks; the glyph
@@ -36,7 +54,25 @@ struct RichText: NSViewRepresentable {
         let usedHeight = layoutManager.usedRect(for: container).height
         let glyphRange = layoutManager.glyphRange(for: container)
         let boundingHeight = layoutManager.boundingRect(forGlyphRange: glyphRange, in: container).height
-        return CGSize(width: width, height: ceil(max(usedHeight, boundingHeight)))
+        let height = ceil(max(usedHeight, boundingHeight))
+        cache.measuredWidth = width
+        cache.measuredText = attributedString
+        cache.measuredHeight = height
+        return CGSize(width: width, height: height)
+    }
+}
+
+/// Rendered bodies, keyed by source text + styling. `NSCache` evicts on its
+/// own under memory pressure; the count limit just bounds a long session.
+enum RenderCache {
+    static let shared: NSCache<NSString, NSAttributedString> = {
+        let cache = NSCache<NSString, NSAttributedString>()
+        cache.countLimit = 300
+        return cache
+    }()
+
+    static func key(_ kind: String, _ source: String, _ fontSize: CGFloat, _ textColor: Color, _ linkColor: Color) -> NSString {
+        "\(kind)|\(fontSize)|\(textColor)|\(linkColor)|\(source)" as NSString
     }
 }
 
@@ -70,26 +106,70 @@ struct RenderedBodyText: View {
     var textColor: Color = Palette.textBody
     var linkColor: Color = Palette.accent
 
+    /// The HTML version, once rendered. Rendering (AppKit's HTML importer,
+    /// i.e. WebKit) is slow and main-thread only, so a cold body first shows
+    /// the plain Markdown version and swaps in the HTML one just after the
+    /// screen's slide-in, instead of stalling that animation.
+    @State private var rendered: RenderedBody?
+
+    private var cacheKey: String? {
+        html.map { RenderCache.key("body", $0, fontSize, textColor, linkColor) as String }
+    }
+
     var body: some View {
-        if let html {
-            // Tables are split out and drawn separately — see `BodySegment`.
-            VStack(alignment: .leading, spacing: 8) {
-                ForEach(Array(Self.splitSegments(html).enumerated()), id: \.offset) { _, segment in
-                    switch segment {
-                    case .text(let chunk):
-                        if let rendered = Self.render(chunk, fontSize: fontSize, textColor: textColor, linkColor: linkColor) {
-                            RichText(attributedString: rendered)
-                        }
-                    case .table(let tableHTML):
-                        if let table = Self.parseTable(tableHTML, fontSize: fontSize, textColor: textColor, linkColor: linkColor) {
-                            TableGridView(table: table)
+        if let html, let key = cacheKey {
+            if let ready = (rendered?.key == key ? rendered : nil) ?? Self.bodyCache.object(forKey: key as NSString) {
+                // Tables are split out and drawn separately — see `BodySegment`.
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(Array(ready.parts.enumerated()), id: \.offset) { _, part in
+                        switch part {
+                        case .text(let text): RichText(attributedString: text)
+                        case .table(let table): TableGridView(table: table)
                         }
                     }
                 }
+            } else {
+                MarkdownText(markdown: fallbackMarkdown, fontSize: fontSize, textColor: textColor, linkColor: linkColor)
+                    .task(id: key) {
+                        try? await Task.sleep(for: .milliseconds(300))
+                        guard !Task.isCancelled else { return }
+                        rendered = Self.renderBody(html, key: key, fontSize: fontSize, textColor: textColor, linkColor: linkColor)
+                    }
             }
         } else {
             MarkdownText(markdown: fallbackMarkdown, fontSize: fontSize, textColor: textColor, linkColor: linkColor)
         }
+    }
+
+    /// A fully rendered body: every text chunk imported, every table parsed.
+    final class RenderedBody {
+        enum Part {
+            case text(NSAttributedString)
+            case table(ParsedTable)
+        }
+        let key: String
+        let parts: [Part]
+        init(key: String, parts: [Part]) { self.key = key; self.parts = parts }
+    }
+
+    private static let bodyCache: NSCache<NSString, RenderedBody> = {
+        let cache = NSCache<NSString, RenderedBody>()
+        cache.countLimit = 200
+        return cache
+    }()
+
+    private static func renderBody(_ html: String, key: String, fontSize: CGFloat, textColor: Color, linkColor: Color) -> RenderedBody {
+        let parts: [RenderedBody.Part] = splitSegments(html).compactMap { segment in
+            switch segment {
+            case .text(let chunk):
+                return render(chunk, fontSize: fontSize, textColor: textColor, linkColor: linkColor).map { .text($0) }
+            case .table(let tableHTML):
+                return parseTable(tableHTML, fontSize: fontSize, textColor: textColor, linkColor: linkColor).map { .table($0) }
+            }
+        }
+        let body = RenderedBody(key: key, parts: parts)
+        bodyCache.setObject(body, forKey: key as NSString)
+        return body
     }
 
     /// Flowed HTML, or a `<table>` block. The importer parses tables into
@@ -125,7 +205,7 @@ struct RenderedBodyText: View {
     }
 
     /// `rows[0]` is always the header row — every GFM table has one.
-    fileprivate struct ParsedTable {
+    struct ParsedTable {
         let rows: [[NSAttributedString]]
     }
 
@@ -154,8 +234,19 @@ struct RenderedBodyText: View {
         return attr.attributedSubstring(from: NSRange(location: 0, length: attr.length - 1))
     }
 
-    /// AppKit's HTML importer must run on the main thread (views are `@MainActor`).
+    /// AppKit's HTML importer must run on the main thread (views are `@MainActor`)
+    /// and is slow (it spins up WebKit), so results are cached: `body` runs on
+    /// every redraw of the popover, and re-importing each time made it flicker.
+    /// Colors are dynamic system colors, so a cached string still follows the theme.
     private static func render(_ html: String, fontSize: CGFloat, textColor: Color, linkColor: Color) -> NSAttributedString? {
+        let key = RenderCache.key("html", html, fontSize, textColor, linkColor)
+        if let cached = RenderCache.shared.object(forKey: key) { return cached }
+        guard let rendered = importHTML(html, fontSize: fontSize, textColor: textColor, linkColor: linkColor) else { return nil }
+        RenderCache.shared.setObject(rendered, forKey: key)
+        return rendered
+    }
+
+    private static func importHTML(_ html: String, fontSize: CGFloat, textColor: Color, linkColor: Color) -> NSAttributedString? {
         guard let data = html.data(using: .utf8) else { return nil }
         guard let imported = try? NSAttributedString(
             data: data,
@@ -236,7 +327,15 @@ struct MarkdownText: View {
     var linkColor: Color = Palette.accent
 
     var body: some View {
-        RichText(attributedString: Self.parse(markdown, fontSize: fontSize, textColor: textColor, linkColor: linkColor))
+        RichText(attributedString: Self.cachedParse(markdown, fontSize: fontSize, textColor: textColor, linkColor: linkColor))
+    }
+
+    private static func cachedParse(_ raw: String, fontSize: CGFloat, textColor: Color, linkColor: Color) -> NSAttributedString {
+        let key = RenderCache.key("md", raw, fontSize, textColor, linkColor)
+        if let cached = RenderCache.shared.object(forKey: key) { return cached }
+        let parsed = parse(raw, fontSize: fontSize, textColor: textColor, linkColor: linkColor)
+        RenderCache.shared.setObject(parsed, forKey: key)
+        return parsed
     }
 
     private static func parse(_ raw: String, fontSize: CGFloat, textColor: Color, linkColor: Color) -> NSAttributedString {

@@ -13,7 +13,7 @@ run: build
 	pkill -x gitbar || true
 	open $(DERIVED)/Build/Products/Debug/gitbar.app
 
-# Build a Release copy from this checkout into ~/Applications (or
+# Build a Release copy from this checkout into /Applications (or
 # INSTALL_DIR=…) and open it. Built locally, so no Gatekeeper prompt.
 # Update later with: git pull && make install
 install: gen
@@ -21,7 +21,7 @@ install: gen
 
 uninstall:
 	pkill -x gitbar || true
-	rm -rf "$(or $(INSTALL_DIR),$(HOME)/Applications)/gitbar.app"
+	rm -rf "$(or $(INSTALL_DIR),/Applications)/gitbar.app"
 
 # One-time: create the Sparkle EdDSA key (private half stays in your login
 # Keychain) and write its public half into project.yml.
