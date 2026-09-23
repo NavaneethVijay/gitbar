@@ -4,6 +4,19 @@ A native macOS menu bar app for your git repos. Pin the repos you care about, se
 
 GitHub (github.com and GitHub Enterprise Server) is supported today; the app is built so GitLab and Bitbucket are one module each.
 
+<p align="center">
+  <img src="screenshots/pinned-repos.png" width="360" alt="Pinned repos">
+  <img src="screenshots/repo-detail.png" width="360" alt="Repo detail: pull requests and issues">
+</p>
+<p align="center">
+  <img src="screenshots/pr-detail.png" width="360" alt="Pull request detail">
+  <img src="screenshots/new-pr.png" width="360" alt="Create a pull request">
+</p>
+<p align="center">
+  <img src="screenshots/settings-account.png" width="360" alt="Settings: account">
+   <img src="screenshots/settings-add-account.png" width="360" alt="Settings: account">
+</p>
+
 ## Features
 
 - **Pinned repos** with a status ring: all clear, CI running, or review requested.
