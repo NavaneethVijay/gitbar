@@ -42,7 +42,9 @@ grep -q 'SUPublicEDKey: ""' project.yml && HAS_KEY=
 if [[ -z "$DRY_RUN" ]]; then
     [[ -n "$HAS_KEY" ]] || die "SUPublicEDKey is empty — run 'make update-keys' first."
     gh auth status >/dev/null 2>&1 || die "gh isn't logged in — run 'gh auth login'."
-    gh repo view "$REPO" >/dev/null 2>&1 || die "can't see $REPO with the current gh account ($(gh api user -q .login 2>/dev/null))."
+    GH_USER="$(gh api user -q .login 2>/dev/null)"
+    [[ "$(gh api "repos/$REPO" -q .permissions.push 2>/dev/null)" == "true" ]] ||
+        die "gh account '$GH_USER' can't push to $REPO — run 'gh auth login' (or 'gh auth switch') as an account that can."
     ! gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1 || die "release $TAG already exists on $REPO."
 fi
 
