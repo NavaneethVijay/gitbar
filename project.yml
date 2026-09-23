@@ -47,7 +47,7 @@ targets:
         SUFeedURL: https://github.com/NavaneethVijay/gitbar/releases/latest/download/appcast.xml
         # Public half of the Sparkle EdDSA key — set by `make update-keys`.
         # Updates are rejected until it's filled in.
-        SUPublicEDKey: ""
+        SUPublicEDKey: "F0PQtHYyc8BdMcJ8lXN96XBwxi0f99CaTfipko+REJA="
         # Sandboxed app: Sparkle installs through its XPC launcher service.
         SUEnableInstallerLauncherService: true
         # The General settings screen owns this toggle, so skip Sparkle's own
