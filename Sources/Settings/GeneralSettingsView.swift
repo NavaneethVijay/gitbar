@@ -140,6 +140,9 @@ struct GeneralSettingsView: View {
                 LabeledContent("Author") {
                     Link("NavaneethVijay", destination: URL(string: "https://github.com/NavaneethVijay")!)
                 }
+                LabeledContent("Acknowledgements") {
+                    Button("Third-party licenses…") { openAcknowledgements() }
+                }
             } header: {
                 Text("About")
             }
@@ -157,6 +160,17 @@ struct GeneralSettingsView: View {
         // Catch changes made in System Settings while this window was away.
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { _ in
             loginItemStatus = SMAppService.mainApp.status
+        }
+    }
+
+    /// The bundled notices (NOTICE.md + THIRD_PARTY_LICENSES, copied into
+    /// the app's Resources at build time).
+    private func openAcknowledgements() {
+        if let notice = Bundle.main.url(forResource: "NOTICE", withExtension: "md") {
+            NSWorkspace.shared.open(notice)
+        }
+        if let folder = Bundle.main.url(forResource: "THIRD_PARTY_LICENSES", withExtension: nil) {
+            NSWorkspace.shared.activateFileViewerSelecting([folder])
         }
     }
 

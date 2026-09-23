@@ -27,6 +27,15 @@ targets:
       - path: Sources
         excludes:
           - "**/*.md"
+      # License texts ship inside the app (Contents/Resources), so every
+      # built copy carries them — Sparkle's framework doesn't include its own.
+      - path: LICENSE
+        buildPhase: resources
+      - path: NOTICE.md
+        buildPhase: resources
+      - path: THIRD_PARTY_LICENSES
+        type: folder
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.navaneeth.gitbar
