@@ -113,6 +113,9 @@ struct MenuContentView: View {
                         onSubmitReview: { decision, body in
                             Task { await repoStore.submitReview(repoID: repoID, prID: pr.id, decision: decision, body: body) }
                         },
+                        onAddComment: { body in
+                            Task { await repoStore.addComment(repoID: repoID, prID: pr.id, body: body) }
+                        },
                         isRefreshingDetail: repoStore.isRefreshingPRDetail(repoID: repoID, prID: pr.id),
                         onRefresh: {
                             Task { await repoStore.refreshPRDetail(repoID: repoID, prID: pr.id) }
@@ -261,6 +264,25 @@ struct MenuContentView: View {
                         Image(systemName: "hourglass").font(.system(size: 10))
                         Text(warning).font(.system(size: 10.5)).lineLimit(1).truncationMode(.tail)
                     }
+                    .foregroundStyle(Palette.attention)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6)
+                }
+                // Some repos failed while others loaded — say so instead of
+                // silently showing a shorter list.
+                if let error = repoStore.loadError {
+                    Button { Task { await repoStore.refresh(force: true) } } label: {
+                        HStack(spacing: 6) {
+                            Image(systemName: "exclamationmark.triangle").font(.system(size: 10))
+                            Text(error).font(.system(size: 10.5)).lineLimit(2).multilineTextAlignment(.leading)
+                            Spacer(minLength: 0)
+                            Image(systemName: "arrow.clockwise").font(.system(size: 10))
+                        }
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .pointerStyle(.link)
+                    .help("Retry")
                     .foregroundStyle(Palette.attention)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 6)

@@ -99,12 +99,13 @@ struct GitHubIssue: Decodable {
 }
 
 struct GitHubReview: Decodable {
+    let id: Int
     let user: GitHubUserRef
     let state: String  // "APPROVED" / "CHANGES_REQUESTED" / "COMMENTED" / "DISMISSED" / "PENDING"
     let submittedAt: Date?
 
     enum CodingKeys: String, CodingKey {
-        case user, state
+        case id, user, state
         case submittedAt = "submitted_at"
     }
 }

@@ -61,6 +61,9 @@ final class LiveRepoStore {
     // interval to decide whether a revisit re-fetches.
     @ObservationIgnored private var refreshTask: Task<Void, Never>?
     @ObservationIgnored private var lastRefreshAt: Date?
+    /// The favorites the last refresh covered — a change (a repo just
+    /// favorited in Settings) bypasses the throttle so it shows up at once.
+    @ObservationIgnored private var lastRefreshedRepos: Set<RepoRef> = []
     @ObservationIgnored private var lastRepoDetailRefreshAt: [RepoRef: Date] = [:]
     @ObservationIgnored private var lastPRDetailRefreshAt: [PRRef: Date] = [:]
     @ObservationIgnored private var isRefreshingRepoDetail: Set<RepoRef> = []
@@ -130,14 +133,22 @@ final class LiveRepoStore {
             await inFlight.value
             return
         }
-        if !force, let last = lastRefreshAt,
+        let favorites = currentFavorites()
+        if !force, favorites == lastRefreshedRepos, let last = lastRefreshAt,
            Date().timeIntervalSince(last) < Self.minimumRefreshInterval { return }
+        lastRefreshedRepos = favorites
 
         let task = Task { await performRefresh() }
         refreshTask = task
         await task.value
         refreshTask = nil
         lastRefreshAt = Date()
+    }
+
+    private func currentFavorites() -> Set<RepoRef> {
+        Set(accountStore.accounts.flatMap { account in
+            favoriteStore.favoriteFullNames(for: account.id).map { RepoRef(accountID: account.id, path: $0) }
+        })
     }
 
     /// An account with no token, no module or a low rate limit just
@@ -205,7 +216,7 @@ final class LiveRepoStore {
 
         assign(\.snapshots, ok.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending })
         assign(\.loadError, failed.isEmpty ? nil
-            : "Couldn't load \(failed.sorted().joined(separator: ", ")) — pull to refresh to try again.")
+            : "Couldn't load \(failed.sorted().joined(separator: ", ")) — tap to retry.")
         assign(\.isLoading, false)
     }
 
@@ -631,6 +642,27 @@ final class LiveRepoStore {
             await refreshReviewers(repoID: repoID, prID: prID)
         } catch {
             reviewSubmitError[key] = Self.message(for: error, fallback: "Couldn't submit review.")
+        }
+    }
+
+    /// Shares the review's in-flight/error state — it's the same composer.
+    func addComment(repoID: RepoRef, prID: Int, body: String) async {
+        let key = PRRef(repo: repoID, number: prID)
+        let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, isSubmittingReview[key] != true, let (_, client) = resolve(repoID) else { return }
+
+        isSubmittingReview[key] = true
+        reviewSubmitError[key] = nil
+        defer { isSubmittingReview[key] = false }
+
+        let path = repoID.path
+        do {
+            let comment = try await withRateLimitBackoff {
+                try await client.addComment(repo: path, number: prID, body: trimmed)
+            }
+            updatePullRequest(repoID: repoID, prID: prID) { $0.comments.append(DisplayMapper.comment(comment)) }
+        } catch {
+            reviewSubmitError[key] = Self.message(for: error, fallback: "Couldn't post comment.")
         }
     }
 

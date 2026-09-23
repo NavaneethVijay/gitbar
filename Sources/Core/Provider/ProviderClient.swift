@@ -42,6 +42,9 @@ protocol ProviderClient: Actor {
 
     // Writes.
     func submitReview(repo: String, number: Int, decision: ReviewDecision, body: String?) async throws
+    /// A plain reply into the conversation thread (what `comments` lists) —
+    /// no review verdict attached.
+    func addComment(repo: String, number: Int, body: String) async throws -> Comment
     func createFormData(repo: String) async throws -> CreatePullRequestFormData
     func createPullRequest(repo: String, draft: CreatePullRequestDraft) async throws -> PullRequest
 

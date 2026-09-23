@@ -23,12 +23,20 @@ struct PRDetailView: View {
     /// Hidden for providers without a separate "request changes" verdict.
     var canRequestChanges = true
     var onSubmitReview: (_ decision: ReviewDecision, _ body: String) -> Void = { _, _ in }
+    /// A plain reply into the thread, no verdict.
+    var onAddComment: (_ body: String) -> Void = { _ in }
     var isRefreshingDetail: Bool = false
     var onRefresh: () -> Void = {}
     var onBack: () -> Void = {}
 
     @State private var reviewDraft = ""
     @State private var showReviewSubmittedToast = false
+    /// What the in-flight submission was, for the toast's wording.
+    @State private var submittedComment = false
+
+    private var draftIsEmpty: Bool {
+        reviewDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -58,7 +66,7 @@ struct PRDetailView: View {
         .frame(width: PRDetailMetrics.width, height: PRDetailMetrics.height, alignment: .top)
         .overlay(alignment: .top) {
             if showReviewSubmittedToast {
-                ReviewSubmittedToast()
+                ReviewSubmittedToast(title: submittedComment ? "Comment posted" : "Review submitted")
                     .padding(.top, 8)
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
@@ -224,7 +232,8 @@ struct PRDetailView: View {
         .padding(.vertical, 12)
     }
 
-    /// A formal review, not a reply into the thread.
+    /// "Comment" replies into the thread; Approve / Request changes submit
+    /// a formal review.
     private var composer: some View {
         VStack(alignment: .trailing, spacing: 8) {
             if let reviewSubmitError {
@@ -239,7 +248,7 @@ struct PRDetailView: View {
                     .fill(Palette.wash.opacity(0.03))
                     .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Palette.wash.opacity(0.08)))
                 if reviewDraft.isEmpty {
-                    Text("Leave a review comment — optional for Approve")
+                    Text("Leave a comment — optional for Approve")
                         .font(.system(size: 11.5))
                         .foregroundStyle(Palette.textPlaceholder)
                         .padding(10)
@@ -259,15 +268,18 @@ struct PRDetailView: View {
                     ProgressView().controlSize(.small).scaleEffect(0.7)
                 }
                 Spacer(minLength: 0)
-                ReviewActionButton(title: "Comment", color: Palette.neutral, isDisabled: isSubmittingReview) {
-                    onSubmitReview(.comment, reviewDraft)
+                ReviewActionButton(title: "Comment", color: Palette.neutral, isDisabled: isSubmittingReview || draftIsEmpty) {
+                    submittedComment = true
+                    onAddComment(reviewDraft)
                 }
                 if canRequestChanges {
                     ReviewActionButton(title: "Request changes", color: Palette.danger, isDisabled: isSubmittingReview) {
+                        submittedComment = false
                         onSubmitReview(.requestChanges, reviewDraft)
                     }
                 }
                 ReviewActionButton(title: "Approve", color: RepoActivityState.idle.color, isDisabled: isSubmittingReview) {
+                    submittedComment = false
                     onSubmitReview(.approve, reviewDraft)
                 }
             }
@@ -304,11 +316,12 @@ private struct RefreshButton: View {
 }
 
 private struct ReviewSubmittedToast: View {
+    let title: String
     var body: some View {
         HStack(spacing: 6) {
             Image(systemName: "checkmark.circle.fill")
                 .foregroundStyle(RepoActivityState.idle.color)
-            Text("Review submitted")
+            Text(title)
                 .font(.system(size: 11.5, weight: .semibold))
                 .foregroundStyle(Palette.textPrimary)
         }

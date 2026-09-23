@@ -230,9 +230,30 @@ actor GitHubClient: ProviderClient {
     func submitReview(repo: String, number: Int, decision: ReviewDecision, body: String?) async throws {
         struct Submission: Encodable { let body: String?; let event: String }
         struct Ignored: Decodable {}
-        let _: Ignored = try await transport.send(
-            "POST", url("/repos/\(repo)/pulls/\(number)/reviews"),
-            body: Submission(body: body, event: GitHubMapping.reviewEvent(decision)))
+        let submission = Submission(body: body, event: GitHubMapping.reviewEvent(decision))
+        do {
+            let _: Ignored = try await transport.send(
+                "POST", url("/repos/\(repo)/pulls/\(number)/reviews"), body: submission)
+        } catch ProviderError.validationFailed(let message) where message.localizedCaseInsensitiveContains("pending review") {
+            // A draft review started on the web ("Start a review") blocks a
+            // new one — submit that draft instead, as "Finish your review"
+            // does. Only your own pending review is visible in the list.
+            let reviews: [GitHubReview] = try await get("/repos/\(repo)/pulls/\(number)/reviews?per_page=100").value
+            guard let pending = reviews.last(where: { $0.state == "PENDING" }) else {
+                throw ProviderError.validationFailed(message)
+            }
+            let _: Ignored = try await transport.send(
+                "POST", url("/repos/\(repo)/pulls/\(number)/reviews/\(pending.id)/events"), body: submission)
+        }
+    }
+
+    /// An issue comment, so it lands in the same thread `comments` reads.
+    func addComment(repo: String, number: Int, body: String) async throws -> Comment {
+        struct NewComment: Encodable { let body: String }
+        let created: GitHubComment = try await transport.send(
+            "POST", url("/repos/\(repo)/issues/\(number)/comments"),
+            body: NewComment(body: body), headers: Self.fullMediaType)
+        return created.domain
     }
 
     func createFormData(repo: String) async throws -> CreatePullRequestFormData {
