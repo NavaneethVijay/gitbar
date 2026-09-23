@@ -1,0 +1,74 @@
+name: gitbar
+options:
+  bundleIdPrefix: com.navaneeth
+  deploymentTarget:
+    macOS: "15.0"
+packages:
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: 2.10.0
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    # Both are the release version (`make release` sets them): Sparkle compares
+    # CFBundleVersion against the appcast, so a plain counter here would sort
+    # wrong against "x.y.z".
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "0.1.0"
+    MACOSX_DEPLOYMENT_TARGET: "15.0"
+    CODE_SIGN_STYLE: Automatic
+targets:
+  gitbar:
+    type: application
+    platform: macOS
+    dependencies:
+      - package: Sparkle
+    sources:
+      - path: Sources
+        excludes:
+          - "**/*.md"
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.navaneeth.gitbar
+        PRODUCT_NAME: gitbar
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: gitbar
+        INFOPLIST_KEY_NSHumanReadableCopyright: "© 2026 NavaneethVijay"
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.developer-tools
+        INFOPLIST_KEY_NSPrincipalClass: NSApplication
+        ENABLE_APP_SANDBOX: YES
+        ENABLE_HARDENED_RUNTIME: YES
+        CODE_SIGN_ENTITLEMENTS: Sources/App/gitbar.entitlements
+    info:
+      path: Generated-Info.plist
+      properties:
+        # Where Sparkle looks for new releases — `make release` uploads
+        # appcast.xml to each GitHub release; "latest" always resolves.
+        SUFeedURL: https://github.com/NavaneethVijay/gitbar/releases/latest/download/appcast.xml
+        # Public half of the Sparkle EdDSA key — set by `make update-keys`.
+        # Updates are rejected until it's filled in.
+        SUPublicEDKey: ""
+        # Sandboxed app: Sparkle installs through its XPC launcher service.
+        SUEnableInstallerLauncherService: true
+        # The General settings screen owns this toggle, so skip Sparkle's own
+        # "check automatically?" prompt on second launch.
+        SUEnableAutomaticChecks: true
+    entitlements:
+      path: Sources/App/gitbar.entitlements
+      properties:
+        com.apple.security.app-sandbox: true
+        com.apple.security.network.client: true
+        # Lets the sandboxed app reach Sparkle's installer XPC services.
+        com.apple.security.temporary-exception.mach-lookup.global-name:
+          - $(PRODUCT_BUNDLE_IDENTIFIER)-spks
+          - $(PRODUCT_BUNDLE_IDENTIFIER)-spki
+    scheme:
+      testTargets: []
+      gatherCoverageData: false
+schemes:
+  gitbar:
+    build:
+      targets:
+        gitbar: all
+    run:
+      config: Debug

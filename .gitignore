@@ -1,0 +1,5 @@
+gitbar.xcodeproj/
+Generated-Info.plist
+build/
+DerivedData/
+.DS_Store
