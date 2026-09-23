@@ -7,20 +7,20 @@ GitHub (github.com and GitHub Enterprise Server) is supported today; the app is 
 ## Features
 
 - **Pinned repos** with a status ring: all clear, CI running, or review requested.
-- **Pull requests and issues** per repo, paginated, with real CI status per PR.
+- **Pull requests and issues** per repo, paginated, with real CI status per PR — and an **Only mine** filter.
 - **PR detail**: description (rendered like GitHub), reviewers, checks, comments — and submit a review (Approve / Request changes / Comment).
 - **Create pull requests**: pick source and target branch, title, and description — prefilled from the repo's PR template.
 - **Notifications**: an inbox of review requests, mentions, assignments and more, an unread dot on the menu bar icon, per-repo unread counts, and macOS alerts for new ones (you choose which reasons). Needs a classic token with the `notifications` or `repo` scope.
 - **Token check**: when you add an account, gitbar tells you what the token can do (read repos, review/open PRs, notifications) and how to fix what's missing.
 - **Multiple accounts**, cloud or self-hosted.
 - **Background refresh** (configurable), cheap on your rate limit: unchanged data comes back as `304 Not Modified`.
-- Light / Dark / System appearance, open at login, automatic updates.
+- Light / Dark / System appearance, an optional solid (non-translucent) background, and open at login.
 
 ## Install
 
-Build it from source — one command, and since nothing is downloaded, macOS has no reason to block it.
+gitbar is installed by building it from source. There are no prebuilt downloads yet — see [Roadmap](#roadmap) for why.
 
-Requires macOS 15+, Xcode, and [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`).
+**Requirements:** macOS 15 or later, [Xcode](https://apps.apple.com/app/xcode/id497799835), and [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`).
 
 ```sh
 git clone https://github.com/NavaneethVijay/gitbar.git
@@ -28,16 +28,20 @@ cd gitbar
 make install        # builds, installs to /Applications/gitbar.app, and opens it
 ```
 
-gitbar lives in the menu bar — it has no window or Dock icon. Open **Settings → Accounts → GitHub → Add Account**, choose Cloud or Self-hosted, and paste a [personal access token](https://github.com/settings/tokens) with read access to your repos (plus write access to pull requests if you want to review or open PRs). Then pick the repos to show.
+Because the app is built on your own Mac rather than downloaded, macOS opens it without any security prompt.
 
-To update: `git pull && make install`. To remove: `make uninstall`. Install elsewhere with `make install INSTALL_DIR=~/Applications` (no admin rights needed).
+gitbar lives in the menu bar — it has no window or Dock icon. To get started:
 
-<details>
-<summary>Prebuilt downloads (DMG)</summary>
+1. Click its menu bar icon → gear → **Manage this app…**
+2. **Accounts → GitHub → Add Account**, choose **Cloud** (github.com) or **Self-hosted** (GitHub Enterprise Server).
+3. Paste a [personal access token](https://github.com/settings/tokens). A **classic** token with the `repo` scope covers everything, including notifications; gitbar shows what your token can and can't do right after you add it.
+4. Pick the repos to show.
 
-Releases also ship a DMG, but gitbar isn't notarized yet (that needs an Apple Developer ID), so macOS blocks the downloaded app with *"Apple could not verify gitbar is free of malware"*. If you use it anyway, drag it to Applications and run `xattr -dr com.apple.quarantine /Applications/gitbar.app` **before** first opening it. Building from source avoids all of this.
-
-</details>
+| | |
+|---|---|
+| Update | `git pull && make install` |
+| Remove | `make uninstall` |
+| Install without admin rights | `make install INSTALL_DIR=~/Applications` |
 
 ## Development
 
@@ -47,29 +51,10 @@ make build    # build only
 make clean    # remove build output and the generated project
 ```
 
-## Releasing
+## Roadmap
 
-Each GitHub release carries a DMG (for installing), plus a zip and a Sparkle `appcast.xml` (for updates); installed copies check `releases/latest/download/appcast.xml`.
-
-One-time setup:
-
-```sh
-make update-keys   # creates the Sparkle signing key (kept in your login Keychain)
-                   # and writes its public key into project.yml
-```
-
-Back up the private key it points you to — without it you can't ship updates to existing installs. Commit the updated `project.yml`.
-
-Each release:
-
-```sh
-make release-dry VERSION=0.2.0   # optional: build + sign + appcast into build/release, publish nothing
-make release VERSION=0.2.0       # build, sign, publish GitHub release v0.2.0
-```
-
-Optional release notes go in `build/release/notes.md` (shown in the update dialog). `gh` must be logged in to an account that can publish to `NavaneethVijay/gitbar` (override with `GITBAR_REPO=owner/name`). Commit the version bump the script leaves in `project.yml`.
-
-Builds are ad-hoc signed for now; with a Developer ID, run with `SIGN_IDENTITY="Developer ID Application: …"` (notarization still to be added).
+- **Signed downloads and automatic updates.** A prebuilt app that just opens needs to be signed with an Apple Developer ID and notarized by Apple — without that, macOS blocks any downloaded copy (*"Apple could not verify gitbar is free of malware"*). Until then, building from source is the supported way to install and update. The groundwork is already in place: in-app updates (Sparkle), a release script that builds a DMG and update feed (`make release`), and signing hooks — they switch on once there's a Developer ID and notarization.
+- **More providers.** GitLab and Bitbucket, each as a self-contained module on the existing provider architecture.
 
 ## Author
 
