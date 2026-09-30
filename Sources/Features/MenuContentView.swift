@@ -106,6 +106,7 @@ struct MenuContentView: View {
                         isLoadingChecks: repoStore.isLoadingChecks(repoID: repoID, prID: pr.id),
                         isLoadingComments: repoStore.isLoadingComments(repoID: repoID, prID: pr.id),
                         isLoadingReviewers: repoStore.isLoadingReviewers(repoID: repoID, prID: pr.id),
+                        isLoadingFiles: repoStore.isLoadingFiles(repoID: repoID, prID: pr.id),
                         isSubmittingReview: repoStore.isSubmittingReview(repoID: repoID, prID: pr.id),
                         reviewSubmitError: repoStore.reviewSubmitError(repoID: repoID, prID: pr.id),
                         provider: repoStore.provider(for: repoID),

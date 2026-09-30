@@ -18,12 +18,6 @@ actor GitHubClient: ProviderClient {
     private let restBase: String
     private let graphQLURL: URL
 
-    /// Adds `body_html` alongside the raw `body` on any endpoint that
-    /// renders one — GitHub's own server-side Markdown rendering, the same
-    /// output github.com shows, in the same response. Only requested where
-    /// a body actually reaches a screen.
-    private static let fullMediaType = ["Accept": "application/vnd.github.full+json"]
-
     init(host: String, token: String) {
         webBase = "https://\(host)"
         isFineGrainedToken = token.hasPrefix("github_pat_")
@@ -102,7 +96,7 @@ actor GitHubClient: ProviderClient {
 
     func pullRequests(repo: String, page: Int) async throws -> Page<PullRequest> {
         let result: (value: [GitHubPullRequest], hasNextPage: Bool) =
-            try await get("/repos/\(repo)/pulls?state=open&per_page=20&page=\(page)", headers: Self.fullMediaType)
+            try await get("/repos/\(repo)/pulls?state=open&per_page=20&page=\(page)")
         return Page(items: result.value.map(\.domain), hasNextPage: result.hasNextPage)
     }
 
@@ -113,7 +107,7 @@ actor GitHubClient: ProviderClient {
     }
 
     func pullRequest(repo: String, number: Int) async throws -> PullRequest {
-        let pr: GitHubPullRequest = try await get("/repos/\(repo)/pulls/\(number)", headers: Self.fullMediaType).value
+        let pr: GitHubPullRequest = try await get("/repos/\(repo)/pulls/\(number)").value
         return pr.domain
     }
 
@@ -140,19 +134,19 @@ actor GitHubClient: ProviderClient {
                 let isDraft: Bool?
                 let createdAt: Date?
                 let body: String?
-                let bodyHTML: String?
                 let headRefName: String?
                 let baseRefName: String?
                 let headRefOid: String?
                 let author: Login?
                 let reviewRequests: ReviewRequests?
+                let url: URL?
             }
             let data: DataField?
         }
         let query = """
         query($q: String!, $after: String) { search(query: $q, type: ISSUE, first: 20, after: $after) {
           pageInfo { hasNextPage endCursor }
-          nodes { ... on PullRequest { number title isDraft createdAt body bodyHTML headRefName baseRefName headRefOid
+          nodes { ... on PullRequest { number title isDraft createdAt body headRefName baseRefName headRefOid url
             author { login } reviewRequests(first: 20) { nodes { requestedReviewer { ... on User { login } } } } } } } }
         """
         let response: Response = try await graphQL(query, variables: [
@@ -170,8 +164,8 @@ actor GitHubClient: ProviderClient {
                 isDraft: node.isDraft ?? false,
                 requestedReviewers: node.reviewRequests?.nodes.compactMap { $0.requestedReviewer?.login } ?? [],
                 sourceBranch: node.headRefName ?? "", targetBranch: node.baseRefName ?? "",
-                headSHA: node.headRefOid ?? "", body: node.body ?? "", bodyHTML: node.bodyHTML,
-                createdAt: createdAt)
+                headSHA: node.headRefOid ?? "", body: node.body ?? "",
+                createdAt: createdAt, webURL: node.url)
         }
         return Page(items: items, hasNextPage: search.pageInfo.hasNextPage)
     }
@@ -215,14 +209,21 @@ actor GitHubClient: ProviderClient {
 
     /// A PR's conversation comments are issue comments on GitHub.
     func comments(repo: String, number: Int) async throws -> [Comment] {
-        let comments: [GitHubComment] =
-            try await get("/repos/\(repo)/issues/\(number)/comments?per_page=50", headers: Self.fullMediaType).value
+        let comments: [GitHubComment] = try await get("/repos/\(repo)/issues/\(number)/comments?per_page=50").value
         return comments.map(\.domain)
     }
 
     func reviewers(repo: String, pullRequest: PullRequest) async throws -> [Reviewer] {
         let reviews: [GitHubReview] = try await get("/repos/\(repo)/pulls/\(pullRequest.number)/reviews").value
         return GitHubMapping.reviewers(requested: pullRequest.requestedReviewers, reviews: reviews)
+    }
+
+    /// A single page (100), matching the same bounded-request-volume choice
+    /// as `comments` — a PR with more changed files than that shows only the
+    /// first 100.
+    func files(repo: String, number: Int) async throws -> [PullRequestFileChange] {
+        let files: [GitHubPullRequestFile] = try await get("/repos/\(repo)/pulls/\(number)/files?per_page=100").value
+        return files.map(\.domain)
     }
 
     // MARK: - Writes
@@ -251,8 +252,7 @@ actor GitHubClient: ProviderClient {
     func addComment(repo: String, number: Int, body: String) async throws -> Comment {
         struct NewComment: Encodable { let body: String }
         let created: GitHubComment = try await transport.send(
-            "POST", url("/repos/\(repo)/issues/\(number)/comments"),
-            body: NewComment(body: body), headers: Self.fullMediaType)
+            "POST", url("/repos/\(repo)/issues/\(number)/comments"), body: NewComment(body: body))
         return created.domain
     }
 
@@ -271,8 +271,7 @@ actor GitHubClient: ProviderClient {
         struct NewPullRequest: Encodable { let title: String; let head: String; let base: String; let body: String? }
         let created: GitHubPullRequest = try await transport.send(
             "POST", url("/repos/\(repo)/pulls"),
-            body: NewPullRequest(title: draft.title, head: draft.sourceBranch, base: draft.targetBranch, body: draft.body),
-            headers: Self.fullMediaType)
+            body: NewPullRequest(title: draft.title, head: draft.sourceBranch, base: draft.targetBranch, body: draft.body))
         return created.domain
     }
 

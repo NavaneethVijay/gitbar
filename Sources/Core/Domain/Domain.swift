@@ -51,10 +51,28 @@ struct PullRequest: Equatable, Sendable {
     /// The source branch's head commit — what CI results hang off.
     let headSHA: String
     let body: String
-    /// The provider's own server-rendered HTML for `body`, when it offers
-    /// one — rendered by `RenderedBodyText`, falling back to `body`.
-    let bodyHTML: String?
     let createdAt: Date
+    /// Where to view this PR on the web — also the base for the "open full
+    /// diff on GitHub" link (`{webURL}/files`).
+    let webURL: URL?
+}
+
+/// One file touched by a PR, as the provider's diff summary reports it.
+enum FileChangeStatus: Equatable, Sendable {
+    case added
+    case modified
+    case removed
+    case renamed
+    case copied
+    case changed
+    case unchanged
+}
+
+struct PullRequestFileChange: Equatable, Sendable {
+    let filename: String
+    let status: FileChangeStatus
+    let additions: Int
+    let deletions: Int
 }
 
 struct Issue: Equatable, Sendable {
@@ -97,12 +115,14 @@ enum ReviewState: Equatable, Sendable {
 struct Reviewer: Equatable, Sendable {
     let login: String
     let state: ReviewState
+    /// The review's own comment, when it left one — rendered by
+    /// `RenderedBodyText`.
+    let body: String?
 }
 
 struct Comment: Equatable, Sendable {
     let author: String
     let body: String
-    let bodyHTML: String?
     let createdAt: Date
 }
 

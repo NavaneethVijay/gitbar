@@ -7,6 +7,9 @@ packages:
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle
     from: 2.10.0
+  Markdown:
+    url: https://github.com/apple/swift-markdown
+    from: 0.9.0
 settings:
   base:
     SWIFT_VERSION: "5.0"
@@ -23,6 +26,7 @@ targets:
     platform: macOS
     dependencies:
       - package: Sparkle
+      - package: Markdown
     sources:
       - path: Sources
         excludes:

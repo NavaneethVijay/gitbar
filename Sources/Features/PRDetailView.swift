@@ -16,6 +16,7 @@ struct PRDetailView: View {
     var isLoadingChecks: Bool = false
     var isLoadingComments: Bool = false
     var isLoadingReviewers: Bool = false
+    var isLoadingFiles: Bool = false
     var isSubmittingReview: Bool = false
     var reviewSubmitError: String?
     /// For wording — "PR"/"MR" and `#12`/`!12`.
@@ -54,6 +55,8 @@ struct PRDetailView: View {
                     reviewersSection
                     divider
                     checksSection
+                    divider
+                    filesSection
                     divider
                     commentsSection
                 }
@@ -166,8 +169,7 @@ struct PRDetailView: View {
     }
 
     private var description: some View {
-        RenderedBodyText(html: pr.descriptionHTML, fallbackMarkdown: pr.description,
-                       fontSize: 12, textColor: Palette.textBody)
+        RenderedBodyText(markdown: pr.description, fontSize: 12, textColor: Palette.textBody)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, 14)
@@ -204,6 +206,33 @@ struct PRDetailView: View {
             VStack(spacing: 6) {
                 ForEach(pr.checks) { check in
                     CheckRow(check: check)
+                }
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+    }
+
+    private var filesSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                SectionLabel("Files changed · \(pr.files.count)")
+                Spacer(minLength: 0)
+                if let diffURL = pr.diffURL {
+                    ViewDiffLink(url: diffURL)
+                }
+            }
+            if pr.files.isEmpty && isLoadingFiles {
+                loadingRow
+            } else if pr.files.isEmpty {
+                Text("No file changes.")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Palette.textTertiary)
+            } else {
+                VStack(spacing: 6) {
+                    ForEach(pr.files) { file in
+                        FileChangeRow(file: file)
+                    }
                 }
             }
         }
@@ -348,6 +377,7 @@ private struct BranchChip: View {
         Text(name)
             .font(.system(size: 10.5, design: .monospaced))
             .foregroundStyle(Palette.textComment)
+            .textSelection(.enabled)
             .padding(.horizontal, 8)
             .padding(.vertical, 3)
             .background(RoundedRectangle(cornerRadius: 6).fill(Palette.wash.opacity(0.06)))
@@ -381,23 +411,96 @@ private struct CheckRow: View {
     }
 }
 
-private struct ReviewerRow: View {
-    let reviewer: PRReviewer
+/// Opens the PR's diff view (`{webURL}/files`) on the web.
+private struct ViewDiffLink: View {
+    let url: URL
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Text("View diff ↗")
+            .font(.system(size: 10.5, weight: .semibold))
+            .foregroundStyle(isHovered ? Palette.accentHover : Palette.accent)
+            .contentShape(Rectangle())
+            .onTapGesture { NSWorkspace.shared.open(url) }
+            .hoverHighlight($isHovered)
+    }
+}
+
+private struct FileChangeRow: View {
+    let file: PRFileChange
+
+    private var glyph: String {
+        switch file.status {
+        case .added: return "plus"
+        case .removed: return "minus"
+        default: return "circle.fill"
+        }
+    }
+
+    private var color: Color {
+        switch file.status {
+        case .added: return RepoActivityState.idle.color
+        case .removed: return Palette.danger
+        default: return Palette.neutral
+        }
+    }
 
     var body: some View {
         HStack(spacing: 8) {
-            Circle()
-                .fill(LinearGradient(colors: [Palette.accent, Palette.accentPurple],
-                                     startPoint: .topLeading, endPoint: .bottomTrailing))
-                .frame(width: 20, height: 20)
-                .overlay(Text(reviewer.initials).font(.system(size: 8, weight: .bold)).foregroundStyle(.white))
-            Text(reviewer.login)
-                .font(.system(size: 11.5))
+            Image(systemName: glyph)
+                .font(.system(size: file.status == .added || file.status == .removed ? 11 : 6, weight: .bold))
+                .foregroundStyle(color)
+                .frame(width: 13)
+            Text(file.filename)
+                .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(Palette.textStrong)
-            Spacer(minLength: 0)
-            Text(reviewer.state.label)
-                .font(.system(size: 10.5, weight: .semibold))
-                .foregroundStyle(reviewer.state.color)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Spacer(minLength: 8)
+            HStack(spacing: 4) {
+                if file.additions > 0 {
+                    Text("+\(file.additions)")
+                        .foregroundStyle(RepoActivityState.idle.color)
+                }
+                if file.deletions > 0 {
+                    Text("-\(file.deletions)")
+                        .foregroundStyle(Palette.danger)
+                }
+            }
+            .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+        }
+    }
+}
+
+private struct ReviewerRow: View {
+    let reviewer: PRReviewer
+
+    private var hasBody: Bool {
+        !(reviewer.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: hasBody ? 6 : 0) {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(LinearGradient(colors: [Palette.accent, Palette.accentPurple],
+                                         startPoint: .topLeading, endPoint: .bottomTrailing))
+                    .frame(width: 20, height: 20)
+                    .overlay(Text(reviewer.initials).font(.system(size: 8, weight: .bold)).foregroundStyle(.white))
+                Text(reviewer.login)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Palette.textStrong)
+                Spacer(minLength: 0)
+                Text(reviewer.state.label)
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(reviewer.state.color)
+            }
+            if hasBody {
+                RenderedBodyText(markdown: reviewer.text ?? "", fontSize: 11.5, textColor: Palette.textComment)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, 28)
+            }
         }
     }
 }
@@ -441,8 +544,7 @@ private struct CommentBubble: View {
                     Text(comment.author).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(Palette.textPrimary)
                     Text("· \(comment.timeAgo)").font(.system(size: 11)).foregroundStyle(Palette.textTertiary)
                 }
-                RenderedBodyText(html: comment.htmlText, fallbackMarkdown: comment.text,
-                              fontSize: 11.5, textColor: Palette.textComment)
+                RenderedBodyText(markdown: comment.text, fontSize: 11.5, textColor: Palette.textComment)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(10)
                     .background(RoundedRectangle(cornerRadius: 10).fill(Palette.wash.opacity(0.04)))

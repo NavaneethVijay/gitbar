@@ -103,16 +103,7 @@ struct SettingsView: View {
         case .none:
             EmptyView()
         case .comingSoon(let provider):
-            ContentUnavailableView {
-                Label {
-                    Text(provider.displayName)
-                } icon: {
-                    ProviderLogoView(provider: provider, size: 44)
-                }
-            } description: {
-                Text("\(provider.displayName) support is coming soon.")
-            }
-            .navigationTitle(provider.displayName)
+            ComingSoonView(provider: provider)
         }
     }
 }
@@ -211,6 +202,49 @@ private struct HostingBadge: View {
         .padding(.vertical, 2)
         .background(Capsule().fill(.quaternary))
         .help(account.isCloud ? account.provider.cloudName : account.provider.selfHostedName)
+    }
+}
+
+/// A provider without a module yet — laid out like General: titled sections
+/// of labelled rows, each with an explanatory footer.
+private struct ComingSoonView: View {
+    let provider: ProviderKind
+
+    var body: some View {
+        Form {
+            Section {
+                LabeledContent("Status") {
+                    Text("Coming soon").foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("Support")
+            } footer: {
+                Text("gitbar can't connect \(provider.displayName) accounts yet. Once it can, they'll appear here and in the menu just like GitHub's.")
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
+                LabeledContent("Cloud", value: "\(provider.cloudName) · \(provider.defaultHost)")
+                LabeledContent("Self-hosted", value: provider.selfHostedName)
+            } header: {
+                Text("Hosting")
+            } footer: {
+                Text("Both the hosted service and your organization's own instance will be supported.")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .navigationTitle(provider.displayName)
+        // Every detail screen needs a toolbar item: with none, SwiftUI drops
+        // the window's toolbar and the traffic lights leave the sidebar.
+        .toolbar {
+            ToolbarItem {
+                Button("Open \(provider.displayName)", systemImage: "safari") {
+                    if let url = URL(string: "https://\(provider.defaultHost)") { NSWorkspace.shared.open(url) }
+                }
+                .help("Open \(provider.defaultHost) in your browser")
+            }
+        }
     }
 }
 

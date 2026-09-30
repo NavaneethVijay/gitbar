@@ -37,6 +37,7 @@ struct PRReviewer: Identifiable, Equatable {
     let login: String
     let initials: String
     let state: ReviewState
+    let text: String?
 }
 
 extension ReviewState {
@@ -59,6 +60,15 @@ extension ReviewState {
     }
 }
 
+struct PRFileChange: Identifiable, Equatable {
+    /// The filename, content-derived like `PRCheck.id`.
+    var id: String { filename }
+    let filename: String
+    let status: FileChangeStatus
+    let additions: Int
+    let deletions: Int
+}
+
 struct PRComment: Identifiable, Equatable {
     /// Content-derived for the same reason as `PRCheck.id`.
     let id: String
@@ -66,8 +76,6 @@ struct PRComment: Identifiable, Equatable {
     let initials: String
     let timeAgo: String
     let text: String
-    /// Server-rendered HTML for `text`, when the provider offers it.
-    let htmlText: String?
 }
 
 /// One open PR: row fields plus detail sections (`checks`, `comments`,
@@ -88,10 +96,12 @@ struct RepoPullRequest: Identifiable, Equatable {
     let headBranch: String
     let baseBranch: String
     let description: String
-    let descriptionHTML: String?
     var checks: [PRCheck]
     var comments: [PRComment]
     var reviewers: [PRReviewer]
+    var files: [PRFileChange] = []
+    /// The full diff on the web — `{webURL}/files` — for "View diff".
+    let diffURL: URL?
     /// The domain value behind this row, handed back to the provider for
     /// follow-up calls (checks need its head commit, reviewers its requests).
     let source: PullRequest

@@ -151,8 +151,9 @@ struct GeneralSettingsView: View {
         .navigationTitle("General")
         .toolbar {
             ToolbarItem {
-                Button("Check for Updates…") { updater.checkForUpdates() }
+                Button("Check for Updates", systemImage: "arrow.down.circle") { updater.checkForUpdates() }
                     .disabled(!updater.canCheckForUpdates)
+                    .help("Check for Updates")
             }
         }
         .onChange(of: appearance) { _, mode in mode.apply() }

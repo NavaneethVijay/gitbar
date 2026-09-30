@@ -45,6 +45,7 @@ final class LiveRepoStore {
     private(set) var loadingChecksFor: Set<PRRef> = []
     private(set) var loadingCommentsFor: Set<PRRef> = []
     private(set) var loadingReviewersFor: Set<PRRef> = []
+    private(set) var loadingFilesFor: Set<PRRef> = []
 
     private(set) var isSubmittingReview: [PRRef: Bool] = [:]
     private(set) var reviewSubmitError: [PRRef: String] = [:]
@@ -548,6 +549,17 @@ final class LiveRepoStore {
                 await refreshReviewers(repoID: repoID, prID: prID)
             }
         }
+
+        if pr.files.isEmpty, !loadingFilesFor.contains(key) {
+            loadingFilesFor.insert(key)
+            Task {
+                defer { loadingFilesFor.remove(key) }
+                guard let files = try? await withRateLimitBackoff({
+                    try await client.files(repo: path, number: prID)
+                }) else { return }
+                updatePullRequest(repoID: repoID, prID: prID) { $0.files = files.map(DisplayMapper.fileChange) }
+            }
+        }
     }
 
     func isLoadingChecks(repoID: RepoRef, prID: Int) -> Bool {
@@ -560,6 +572,10 @@ final class LiveRepoStore {
 
     func isLoadingReviewers(repoID: RepoRef, prID: Int) -> Bool {
         loadingReviewersFor.contains(PRRef(repo: repoID, number: prID))
+    }
+
+    func isLoadingFiles(repoID: RepoRef, prID: Int) -> Bool {
+        loadingFilesFor.contains(PRRef(repo: repoID, number: prID))
     }
 
     func isRefreshingPRDetail(repoID: RepoRef, prID: Int) -> Bool {
@@ -594,16 +610,19 @@ final class LiveRepoStore {
         mapped.checks = existing.checks
         mapped.comments = existing.comments
         mapped.reviewers = existing.reviewers
+        mapped.files = existing.files
         Task { await loadCheckSummaries(repoID: repoID, numbers: [prID]) }
 
         async let checksResult = try? withRateLimitBackoff { try await client.checks(repo: path, pullRequest: fresh) }
         async let commentsResult = try? withRateLimitBackoff { try await client.comments(repo: path, number: prID) }
         async let reviewersResult = try? withRateLimitBackoff { try await client.reviewers(repo: path, pullRequest: fresh) }
-        let (checks, comments, reviewers) = await (checksResult, commentsResult, reviewersResult)
+        async let filesResult = try? withRateLimitBackoff { try await client.files(repo: path, number: prID) }
+        let (checks, comments, reviewers, files) = await (checksResult, commentsResult, reviewersResult, filesResult)
 
         if let checks { mapped.checks = checks.map(DisplayMapper.check) }
         if let comments { mapped.comments = comments.map(DisplayMapper.comment) }
         if let reviewers { mapped.reviewers = reviewers.map(DisplayMapper.reviewer) }
+        if let files { mapped.files = files.map(DisplayMapper.fileChange) }
 
         updatePullRequest(repoID: repoID, prID: prID) { $0 = mapped }
     }

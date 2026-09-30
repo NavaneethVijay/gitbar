@@ -55,12 +55,8 @@ struct GitHubPullRequest: Decodable {
     let head: Ref
     let base: Ref
     let body: String?
-    /// GitHub's own server-rendered HTML for `body` — only present when
-    /// fetched with the `full` media type (see `GitHubAPIClient.fullMediaType`).
-    /// `nil` on calls that didn't ask for it (this PR's description was never
-    /// going to be shown from that call anyway).
-    let bodyHTML: String?
     let createdAt: Date
+    let htmlURL: URL?
 
     struct Ref: Decodable {
         let ref: String
@@ -72,9 +68,9 @@ struct GitHubPullRequest: Decodable {
     enum CodingKeys: String, CodingKey {
         case id = "number"
         case title, user, draft, head, base, body
-        case bodyHTML = "body_html"
         case requestedReviewers = "requested_reviewers"
         case createdAt = "created_at"
+        case htmlURL = "html_url"
     }
 }
 
@@ -102,12 +98,20 @@ struct GitHubReview: Decodable {
     let id: Int
     let user: GitHubUserRef
     let state: String  // "APPROVED" / "CHANGES_REQUESTED" / "COMMENTED" / "DISMISSED" / "PENDING"
+    let body: String?
     let submittedAt: Date?
 
     enum CodingKeys: String, CodingKey {
-        case id, user, state
+        case id, user, state, body
         case submittedAt = "submitted_at"
     }
+}
+
+struct GitHubPullRequestFile: Decodable {
+    let filename: String
+    let status: String  // "added" / "removed" / "modified" / "renamed" / "copied" / "changed" / "unchanged"
+    let additions: Int
+    let deletions: Int
 }
 
 struct GitHubCheckRunList: Decodable {
@@ -133,13 +137,10 @@ struct GitHubCheckRun: Decodable {
 struct GitHubComment: Decodable {
     let user: GitHubUserRef
     let body: String
-    /// GitHub's own server-rendered HTML for `body` — see `GitHubPullRequest.bodyHTML`.
-    let bodyHTML: String?
     let createdAt: Date
 
     enum CodingKeys: String, CodingKey {
         case user, body
-        case bodyHTML = "body_html"
         case createdAt = "created_at"
     }
 }

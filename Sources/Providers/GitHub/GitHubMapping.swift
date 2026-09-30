@@ -10,8 +10,15 @@ extension GitHubPullRequest {
             number: id, title: title, author: user.login, isDraft: draft,
             requestedReviewers: requestedReviewers.map(\.login),
             sourceBranch: head.ref, targetBranch: base.ref, headSHA: head.sha ?? "",
-            body: body ?? "", bodyHTML: bodyHTML, createdAt: createdAt
+            body: body ?? "", createdAt: createdAt, webURL: htmlURL
         )
+    }
+}
+
+extension GitHubPullRequestFile {
+    var domain: PullRequestFileChange {
+        PullRequestFileChange(filename: filename, status: GitHubMapping.fileStatus(status),
+                              additions: additions, deletions: deletions)
     }
 }
 
@@ -29,7 +36,7 @@ extension GitHubCheckRun {
 
 extension GitHubComment {
     var domain: Comment {
-        Comment(author: user.login, body: body, bodyHTML: bodyHTML, createdAt: createdAt)
+        Comment(author: user.login, body: body, createdAt: createdAt)
     }
 }
 
@@ -135,7 +142,21 @@ enum GitHubMapping {
                 default: state = .commented
                 }
             }
-            return Reviewer(login: login, state: state)
+            let latest = latestByReviewer[login]
+            return Reviewer(login: login, state: state, body: latest?.body)
+        }
+    }
+
+    /// GitHub's file-status strings on a PR's changed-files list.
+    static func fileStatus(_ raw: String) -> FileChangeStatus {
+        switch raw {
+        case "added": return .added
+        case "removed": return .removed
+        case "renamed": return .renamed
+        case "copied": return .copied
+        case "changed": return .changed
+        case "unchanged": return .unchanged
+        default: return .modified
         }
     }
 

@@ -27,6 +27,8 @@ struct NotificationsSettingsView: View {
                 Toggle("Show notifications", isOn: $enabled)
                 Toggle("Only threads I'm participating in", isOn: $participatingOnly)
                     .disabled(!enabled)
+            } header: {
+                Text("Inbox")
             } footer: {
                 Text("Participating: review requests, mentions, assignments and threads you've commented on or opened. Off: everything you watch, too.")
                     .foregroundStyle(.secondary)
@@ -43,6 +45,14 @@ struct NotificationsSettingsView: View {
                         Button("Open…") { openSystemNotificationSettings() }
                     }
                 }
+            } header: {
+                Text("Alerts")
+            } footer: {
+                Text("Alerts only fire for new or updated threads, never for the backlog already in your inbox.")
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
                 ForEach(Self.reasons, id: \.self) { reason in
                     Toggle(reason.label, isOn: Binding(
                         get: { alertReasons.contains(reason) },
@@ -54,9 +64,9 @@ struct NotificationsSettingsView: View {
                     .disabled(!enabled || !alertsEnabled)
                 }
             } header: {
-                Text("Alerts")
+                Text("Alert Me About")
             } footer: {
-                Text("Alerts only fire for new or updated threads. Everything still appears in the inbox.")
+                Text("Everything still appears in the inbox — these only choose what raises a macOS alert.")
                     .foregroundStyle(.secondary)
             }
 
@@ -81,6 +91,12 @@ struct NotificationsSettingsView: View {
         }
         .formStyle(.grouped)
         .navigationTitle("Notifications")
+        .toolbar {
+            ToolbarItem {
+                Button("System Notification Settings", systemImage: "gearshape") { openSystemNotificationSettings() }
+                    .help("Open gitbar's alert settings in System Settings")
+            }
+        }
         .task { permission = await notificationStore.alerter.authorizationStatus() }
         .onChange(of: enabled) { _, _ in Task { await notificationStore.refresh(force: true) } }
         .onChange(of: participatingOnly) { _, _ in Task { await notificationStore.refresh(force: true) } }

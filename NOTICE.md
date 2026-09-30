@@ -16,6 +16,16 @@ MIT licensed; its license also covers the external components Sparkle bundles
 
 License: [`THIRD_PARTY_LICENSES/Sparkle-LICENSE.txt`](THIRD_PARTY_LICENSES/Sparkle-LICENSE.txt)
 
+## swift-markdown
+
+[swift-markdown](https://github.com/apple/swift-markdown) 0.9.0, Apple's
+CommonMark/GFM parser, is linked via Swift Package Manager and used to parse
+PR/issue/review bodies for native rendering (`Sources/DesignSystem/MarkdownText.swift`).
+Apache-2.0 licensed; its license also covers the `swift-cmark` (cmark-gfm)
+library it depends on.
+
+License: [`THIRD_PARTY_LICENSES/swift-markdown-LICENSE.txt`](THIRD_PARTY_LICENSES/swift-markdown-LICENSE.txt)
+
 ## codenotch
 
 `Sources/Features/SpinningArc.swift` — the spinning ring shown on a repo row

@@ -39,6 +39,8 @@ protocol ProviderClient: Actor {
     /// One state per person, already reduced from the provider's own
     /// requested-reviewer and review-history lists.
     func reviewers(repo: String, pullRequest: PullRequest) async throws -> [Reviewer]
+    /// Every file the PR touches, with its status and line counts.
+    func files(repo: String, number: Int) async throws -> [PullRequestFileChange]
 
     // Writes.
     func submitReview(repo: String, number: Int, decision: ReviewDecision, body: String?) async throws

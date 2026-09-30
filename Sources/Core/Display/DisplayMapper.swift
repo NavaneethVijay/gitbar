@@ -24,8 +24,9 @@ enum DisplayMapper {
             chipLabel: chipLabel, chipColor: chipColor,
             openedAgo: relativeTime(from: pr.createdAt),
             headBranch: pr.sourceBranch, baseBranch: pr.targetBranch,
-            description: pr.body, descriptionHTML: pr.bodyHTML,
-            checks: [], comments: [], reviewers: [],
+            description: pr.body,
+            checks: [], comments: [], reviewers: [], files: [],
+            diffURL: pr.webURL?.appendingPathComponent("files"),
             source: pr
         )
     }
@@ -54,11 +55,17 @@ enum DisplayMapper {
     static func comment(_ comment: Comment) -> PRComment {
         PRComment(id: "\(comment.author)|\(comment.createdAt.timeIntervalSince1970)",
                   author: comment.author, initials: initials(for: comment.author),
-                  timeAgo: relativeTime(from: comment.createdAt), text: comment.body, htmlText: comment.bodyHTML)
+                  timeAgo: relativeTime(from: comment.createdAt), text: comment.body)
     }
 
     static func reviewer(_ reviewer: Reviewer) -> PRReviewer {
-        PRReviewer(id: reviewer.login, login: reviewer.login, initials: initials(for: reviewer.login), state: reviewer.state)
+        PRReviewer(id: reviewer.login, login: reviewer.login, initials: initials(for: reviewer.login),
+                  state: reviewer.state, text: reviewer.body)
+    }
+
+    static func fileChange(_ file: PullRequestFileChange) -> PRFileChange {
+        PRFileChange(filename: file.filename, status: file.status,
+                    additions: file.additions, deletions: file.deletions)
     }
 
     /// The repo-list row. `recentPulls`/`recentIssues` are the cheap tier's
