@@ -34,7 +34,7 @@ GitHub (github.com and GitHub Enterprise Server) is supported today; the app is 
 
 ## Install
 
-gitbar is installed by **building it from source on your own Mac**. There are no prebuilt downloads yet: without an Apple Developer ID signature, macOS blocks any downloaded copy (see [Roadmap](#roadmap)). A copy you build yourself is never blocked — no security prompt, no "Open Anyway".
+gitbar is installed by **building it from source on your own Mac** — there's no `.dmg` or prebuilt download, by design. A copy you build yourself is never blocked by macOS: no security prompt, no "Open Anyway", and you can read every line of what you're running.
 
 It takes about 5 minutes plus the Xcode download.
 
@@ -104,7 +104,6 @@ make clean    # remove build output and the generated project
 
 ## Roadmap
 
-- **Signed downloads and automatic updates.** A prebuilt app that just opens needs to be signed with an Apple Developer ID and notarized by Apple — without that, macOS blocks any downloaded copy (*"Apple could not verify gitbar is free of malware"*). Until then, building from source is the supported way to install and update. The groundwork is already in place: in-app updates (Sparkle), a release script that builds a DMG and update feed (`make release`), and signing hooks — they switch on once there's a Developer ID and notarization.
 - **More providers.** GitLab and Bitbucket, each as a self-contained module on the existing provider architecture.
 
 ## Author
