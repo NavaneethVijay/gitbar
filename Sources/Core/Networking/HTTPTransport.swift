@@ -117,6 +117,22 @@ actor HTTPTransport {
         return try decode(T.self, from: data)
     }
 
+    /// ISO 8601 with or without fractional seconds — GitHub sends
+    /// `2024-05-01T10:20:30Z`, GitLab `2024-05-01T10:20:30.123Z` (and some
+    /// self-managed instances a `+02:00` offset), which `.iso8601` rejects.
+    @Sendable static func decodeDate(_ decoder: Decoder) throws -> Date {
+        let container = try decoder.singleValueContainer()
+        let string = try container.decode(String.self)
+        if let date = try? Date(string, strategy: .iso8601) { return date }
+        if let date = try? Date(string, strategy: Date.ISO8601FormatStyle(includingFractionalSeconds: true)) { return date }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: string) { return date }
+        formatter.formatOptions = [.withInternetDateTime]
+        if let date = formatter.date(from: string) { return date }
+        throw DecodingError.dataCorruptedError(in: container, debugDescription: "Not an ISO 8601 date: \(string)")
+    }
+
     /// `rel="next"` in a `Link` header.
     static func linkHeaderHasNext(_ response: HTTPURLResponse) -> Bool {
         (response.value(forHTTPHeaderField: "Link") ?? "").contains("rel=\"next\"")
@@ -164,7 +180,7 @@ actor HTTPTransport {
     private func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
         do {
             let decoder = JSONDecoder()
-            decoder.dateDecodingStrategy = .iso8601
+            decoder.dateDecodingStrategy = .custom(Self.decodeDate)
             return try decoder.decode(T.self, from: data)
         } catch {
             throw ProviderError.decoding(policy.kind, error)

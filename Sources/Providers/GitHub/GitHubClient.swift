@@ -167,7 +167,7 @@ actor GitHubClient: ProviderClient {
                 requestedReviewers: node.reviewRequests?.nodes.compactMap { $0.requestedReviewer?.login } ?? [],
                 sourceBranch: node.headRefName ?? "", targetBranch: node.baseRefName ?? "",
                 headSHA: node.headRefOid ?? "", body: node.body ?? "",
-                createdAt: createdAt, webURL: node.url)
+                createdAt: createdAt, webURL: node.url, diffURL: node.url?.appendingPathComponent("files"))
         }
         return Page(items: items, hasNextPage: search.pageInfo.hasNextPage)
     }

@@ -49,6 +49,25 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
         }
     }
 
+    /// What the token needs — the Add Account screen's footer.
+    var tokenRequirements: String {
+        switch self {
+        case .github: return "Paste a personal access token with at least read access to repos."
+        case .gitlab: return "Paste a personal access token with the api scope (read_api for read-only)."
+        case .bitbucket: return "Paste an app password with at least read access to repositories."
+        }
+    }
+
+    /// What it takes for this provider's inbox to work — shown when a
+    /// token can't read notifications.
+    var notificationsTokenHint: String {
+        switch self {
+        case .github: return "GitHub needs a classic token with the notifications (or repo) scope — fine-grained tokens can't read notifications."
+        case .gitlab: return "GitLab shows your To-Do List — the token needs read_api (or api), and api to mark items done."
+        case .bitbucket: return "Bitbucket has no notifications API."
+        }
+    }
+
     // MARK: Terminology
 
     /// "Pull Requests" / "Merge Requests" — tab titles.

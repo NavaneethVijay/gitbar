@@ -17,7 +17,7 @@ enum DisplayMapper {
             headBranch: pr.sourceBranch, baseBranch: pr.targetBranch,
             description: pr.body,
             checks: [], comments: [], reviewers: [], files: [],
-            diffURL: pr.webURL?.appendingPathComponent("files"),
+            diffURL: pr.diffURL,
             source: pr
         )
     }

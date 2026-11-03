@@ -107,7 +107,7 @@ struct RepoPullRequest: Identifiable, Equatable {
     var comments: [PRComment]
     var reviewers: [PRReviewer]
     var files: [PRFileChange] = []
-    /// The full diff on the web — `{webURL}/files` — for "View diff".
+    /// The full diff on the web — `PullRequest.diffURL` — for "View diff".
     let diffURL: URL?
     /// The domain value behind this row, handed back to the provider for
     /// follow-up calls (checks need its head commit, reviewers its requests).

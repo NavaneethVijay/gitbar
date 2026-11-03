@@ -643,7 +643,7 @@ private struct CheckRow: View {
     }
 }
 
-/// Opens the PR's diff view (`{webURL}/files`) on the web.
+/// Opens the PR's diff view (`PullRequest.diffURL`) on the web.
 private struct ViewDiffLink: View {
     let url: URL
 

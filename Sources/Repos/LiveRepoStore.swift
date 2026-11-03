@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import Observation
 import SwiftUI
@@ -85,10 +86,43 @@ final class LiveRepoStore {
     init(accountStore: AccountStore, favoriteStore: FavoriteRepoStore) {
         self.accountStore = accountStore
         self.favoriteStore = favoriteStore
+        // Mirrored as observed state so a color picked in Settings repaints
+        // an open popover at once (`AccountStore` is an ObservableObject the
+        // popover doesn't watch). `$accounts` emits the new value on willSet.
+        accountsSubscription = accountStore.$accounts.sink { [weak self] accounts in
+            self?.assign(\.accountBadges, Self.badges(for: accounts))
+        }
+    }
+
+    @ObservationIgnored private var accountsSubscription: AnyCancellable?
+
+    /// What the repo list shows about a repo's account: its color, and a
+    /// "Provider · @login" tooltip.
+    struct AccountBadge: Equatable {
+        let color: AccountColor
+        let label: String
+    }
+
+    /// Per account id — the repo list tints each repo's tile by its account.
+    private(set) var accountBadges: [UUID: AccountBadge] = [:]
+
+    private static func badges(for accounts: [Account]) -> [UUID: AccountBadge] {
+        Dictionary(uniqueKeysWithValues: accounts.enumerated().map { position, account in
+            (account.id, AccountBadge(
+                color: account.resolvedColor(position: position),
+                label: "\(account.provider.displayName) · @\(account.login)" + (account.isCloud ? "" : " (\(account.host))")))
+        })
     }
 
     var hasConnectedAccount: Bool { !accountStore.accounts.isEmpty }
     var accountCount: Int { accountStore.accounts.count }
+
+    /// Each connected provider once, in `ProviderKind` order — for wording
+    /// that depends on which hosts are in use.
+    var connectedProviders: [ProviderKind] {
+        let kinds = Set(accountStore.accounts.map(\.provider))
+        return ProviderKind.allCases.filter(kinds.contains)
+    }
     var hasFavorites: Bool {
         accountStore.accounts.contains { !favoriteStore.favoriteFullNames(for: $0.id).isEmpty }
     }

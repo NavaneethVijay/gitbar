@@ -46,6 +46,36 @@ enum Palette {
     static let neutral        = Color(nsColor: .secondaryLabelColor)
 }
 
+/// An account's color — its repo tiles in the popover and its dot in the
+/// Settings sidebar. Picked per account in Settings; until then each account
+/// gets the next one in order. No green/orange/red: those mean repo status.
+enum AccountColor: String, Codable, CaseIterable, Identifiable, Sendable {
+    case blue, purple, pink, teal, indigo, cyan, brown, mint, yellow, gray
+
+    var id: String { rawValue }
+    var name: String { rawValue.capitalized }
+
+    var color: Color {
+        switch self {
+        case .blue: return Color(nsColor: .systemBlue)
+        case .purple: return Color(nsColor: .systemPurple)
+        case .pink: return Color(nsColor: .systemPink)
+        case .teal: return Color(nsColor: .systemTeal)
+        case .indigo: return Color(nsColor: .systemIndigo)
+        case .cyan: return Color(nsColor: .systemCyan)
+        case .brown: return Color(nsColor: .systemBrown)
+        case .mint: return Color(nsColor: .systemMint)
+        case .yellow: return Color(nsColor: .systemYellow)
+        case .gray: return Color(nsColor: .systemGray)
+        }
+    }
+
+    /// The automatic color for the account at `position`.
+    static func automatic(position: Int) -> AccountColor {
+        allCases[max(position, 0) % allCases.count]
+    }
+}
+
 /// Whether to skip translucency: the user's "Solid background" setting, or
 /// the system's Reduce Transparency. Translucent surfaces make the window
 /// server re-blur whatever is behind them on every frame — real GPU work on

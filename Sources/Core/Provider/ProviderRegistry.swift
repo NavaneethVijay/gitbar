@@ -7,15 +7,16 @@ import Foundation
 enum ProviderRegistry {
     static func isAvailable(_ kind: ProviderKind) -> Bool {
         switch kind {
-        case .github: return true
-        case .gitlab, .bitbucket: return false
+        case .github, .gitlab: return true
+        case .bitbucket: return false
         }
     }
 
     static func makeClient(kind: ProviderKind, host: String, token: String) throws -> any ProviderClient {
         switch kind {
         case .github: return GitHubClient(host: host, token: token)
-        case .gitlab, .bitbucket: throw ProviderError.unsupported(kind)
+        case .gitlab: return GitLabClient(host: host, token: token)
+        case .bitbucket: throw ProviderError.unsupported(kind)
         }
     }
 }

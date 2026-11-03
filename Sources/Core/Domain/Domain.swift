@@ -69,9 +69,11 @@ struct PullRequest: Equatable, Sendable {
     let headSHA: String
     let body: String
     let createdAt: Date
-    /// Where to view this PR on the web — also the base for the "open full
-    /// diff on GitHub" link (`{webURL}/files`).
+    /// Where to view this PR on the web.
     let webURL: URL?
+    /// The PR's full diff on the web, for "View diff" — the module builds it
+    /// (GitHub `{webURL}/files`, GitLab `{webURL}/diffs`).
+    var diffURL: URL? = nil
 }
 
 /// One file touched by a PR, as the provider's diff summary reports it.

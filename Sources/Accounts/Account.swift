@@ -13,9 +13,16 @@ struct Account: Identifiable, Codable, Equatable, Sendable {
     var avatarURL: URL?
     /// What the token can do, from the last check (`nil` until checked).
     var access: TokenAccess?
+    /// Picked in Settings; `nil` = automatic (see `AccountStore.color(for:)`).
+    var color: AccountColor?
 
     /// On the provider's own hosted service, rather than a self-hosted instance.
     var isCloud: Bool { host == provider.defaultHost }
+
+    /// The picked color, else the automatic one for its place in the list.
+    func resolvedColor(position: Int) -> AccountColor {
+        color ?? .automatic(position: position)
+    }
 
     var displayName: String {
         if let name, !name.isEmpty { return name }
@@ -33,7 +40,7 @@ struct Account: Identifiable, Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, provider, host, login, name, avatarURL, access
+        case id, provider, host, login, name, avatarURL, access, color
     }
 
     /// Accounts saved before providers existed have no `provider`/`host` —
@@ -48,5 +55,8 @@ struct Account: Identifiable, Codable, Equatable, Sendable {
         name = try container.decodeIfPresent(String.self, forKey: .name)
         avatarURL = try container.decodeIfPresent(URL.self, forKey: .avatarURL)
         access = try container.decodeIfPresent(TokenAccess.self, forKey: .access)
+        // Lenient: a color name this build doesn't know falls back to automatic
+        // instead of failing the whole account list.
+        color = (try? container.decodeIfPresent(AccountColor.self, forKey: .color)) ?? nil
     }
 }

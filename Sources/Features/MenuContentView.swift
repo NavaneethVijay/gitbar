@@ -99,6 +99,7 @@ struct MenuContentView: View {
                         isLoading: notificationStore.isLoading,
                         noAccountSupportsNotifications: !repoStore.hasConnectedAccount ||
                             notificationStore.unsupportedAccountIDs.count >= model.accountCount,
+                        accessHints: repoStore.connectedProviders.map(\.notificationsTokenHint),
                         errorMessage: notificationStore.lastError,
                         onOpen: { entry in model.open(entry) },
                         onMarkAllRead: { Task { await notificationStore.markAllRead() } },
@@ -278,7 +279,8 @@ struct MenuContentView: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 6)
                 }
-                RepoListPanel(repos: model.repos, unreadCounts: unreadCounts, onSelect: { repo in
+                RepoListPanel(repos: model.repos, unreadCounts: unreadCounts,
+                              accountBadges: repoStore.accountBadges, onSelect: { repo in
                     navigate {
                         model.selectedRepoID = repo.id
                     }

@@ -57,7 +57,7 @@ struct SettingsView: View {
                     if provider.isAvailable {
                         DisclosureGroup(isExpanded: expandedBinding(provider)) {
                             ForEach(accountStore.accounts(for: provider)) { account in
-                                AccountRow(account: account).tag(Selection.account(account.id))
+                                AccountRow(account: account, tint: accountStore.color(for: account.id).color).tag(Selection.account(account.id))
                             }
                             Label("Add Account", systemImage: "plus.circle")
                                 .tag(Selection.addAccount(provider))
@@ -112,20 +112,27 @@ struct SettingsView: View {
 
 private struct AccountRow: View {
     let account: Account
+    /// Same color as this account's repo tiles in the popover.
+    let tint: Color
     var body: some View {
         Label {
-            VStack(alignment: .leading, spacing: 0) {
-                Text(account.displayName).lineLimit(1)
-                // Only worth the space for a self-hosted instance.
-                if !account.isCloud {
-                    Text(account.host)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+            HStack(spacing: 6) {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text(account.displayName).lineLimit(1)
+                    // Only worth the space for a self-hosted instance.
+                    if !account.isCloud {
+                        Text(account.host)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
                 }
+                Spacer(minLength: 0)
+                Circle().fill(tint).frame(width: 7, height: 7)
+                    .help("This account's color in the menu bar repo list")
             }
         } icon: {
-            Avatar(url: account.avatarURL, size: 18)
+            Avatar(account: account, size: 18)
         }
     }
 }
@@ -172,17 +179,39 @@ struct ProviderLogoView: View {
     }
 }
 
+/// The account's avatar, or its initials when there's none or it can't be
+/// loaded — e.g. a private self-hosted GitLab, which serves uploaded avatars
+/// only to signed-in browser sessions (it refuses access tokens on
+/// `/uploads`, and its API has no avatar-bytes route; verified on 19.5).
 private struct Avatar: View {
-    let url: URL?
+    let account: Account
     let size: CGFloat
+
     var body: some View {
-        AsyncImage(url: url) { image in
-            image.resizable().scaledToFill()
-        } placeholder: {
-            Circle().fill(.quaternary)
+        AsyncImage(url: account.avatarURL) { phase in
+            if let image = phase.image {
+                image.resizable().scaledToFill()
+            } else if case .empty = phase, account.avatarURL != nil {
+                Circle().fill(.quaternary)
+            } else {
+                initials
+            }
         }
         .frame(width: size, height: size)
         .clipShape(Circle())
+    }
+
+    private var initials: some View {
+        let words = account.displayName.split(whereSeparator: { " -_.".contains($0) })
+        let letters = (words.count >= 2 ? [words[0], words[words.count - 1]] : Array(words.prefix(1)))
+            .compactMap(\.first).map { String($0).uppercased() }.joined()
+        return Circle()
+            .fill(Color.accentColor.gradient)
+            .overlay {
+                Text(letters.isEmpty ? "?" : letters)
+                    .font(.system(size: size * 0.4, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white)
+            }
     }
 }
 
@@ -276,7 +305,7 @@ private struct AddAccountView: View {
 
     /// Links the token page on whichever host is entered.
     private var footer: AttributedString {
-        var text = "Paste a personal access token with at least read access to repos."
+        var text = provider.tokenRequirements
         if let url = provider.tokenHelpURL(host: resolvedHost) {
             let label = url.host.map { $0 + url.path } ?? url.absoluteString
             text += " Generate one at [\(label)](\(url.absoluteString))."
@@ -385,6 +414,19 @@ private struct AccountDetailView: View {
                 accountHeader
             }
 
+            Section {
+                LabeledContent("Color") {
+                    AccountColorPicker(selection: Binding(
+                        get: { accountStore.color(for: account.id) },
+                        set: { accountStore.setColor($0, for: account.id) }))
+                }
+            } header: {
+                Text("Appearance")
+            } footer: {
+                Text("Tints this account's repos in the menu bar list, so you can tell accounts apart at a glance.")
+                    .foregroundStyle(.secondary)
+            }
+
             TokenAccessSection(account: account, accountStore: accountStore)
 
             Section {
@@ -463,7 +505,7 @@ private struct AccountDetailView: View {
 
     private var accountHeader: some View {
         HStack(spacing: 12) {
-            Avatar(url: account.avatarURL, size: 40)
+            Avatar(account: account, size: 40)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(account.displayName)
@@ -498,6 +540,38 @@ private struct AccountDetailView: View {
                 errorMessage = error.localizedDescription
             }
             isLoading = false
+        }
+    }
+}
+
+// MARK: - Account color
+
+/// A row of color swatches, like System Settings' accent color picker —
+/// a `Picker` can't show colored swatches (menu items draw monochrome).
+private struct AccountColorPicker: View {
+    @Binding var selection: AccountColor
+
+    var body: some View {
+        HStack(spacing: 7) {
+            ForEach(AccountColor.allCases) { option in
+                Button { selection = option } label: {
+                    Circle()
+                        .fill(option.color.gradient)
+                        .frame(width: 16, height: 16)
+                        .overlay {
+                            if option == selection {
+                                Circle().fill(.white).frame(width: 6, height: 6)
+                            }
+                        }
+                        .overlay(Circle().strokeBorder(.black.opacity(0.12), lineWidth: 0.5))
+                        .padding(2)
+                        .contentShape(Circle())
+                }
+                .buttonStyle(.plain)
+                .help(option.name)
+                .accessibilityLabel(option.name)
+                .accessibilityAddTraits(option == selection ? .isSelected : [])
+            }
         }
     }
 }

@@ -13,12 +13,16 @@ struct RepoListPanel: View {
     let repos: [RepoSnapshot]
     /// Unread notification threads per repo — the badge on its icon.
     var unreadCounts: [RepoRef: Int] = [:]
+    /// The owning account's tint and label, per account id.
+    var accountBadges: [UUID: LiveRepoStore.AccountBadge] = [:]
     var onSelect: (RepoSnapshot) -> Void = { _ in }
 
     var body: some View {
         VStack(spacing: RepoPanelMetrics.rowSpacing) {
             ForEach(repos) { repo in
-                RepoRow(snapshot: repo, unread: unreadCounts[repo.id] ?? 0)
+                let badge = accountBadges[repo.id.accountID]
+                RepoRow(snapshot: repo, unread: unreadCounts[repo.id] ?? 0,
+                        tint: (badge?.color ?? .blue).color, accountLabel: badge?.label)
                     .onTapGesture { onSelect(repo) }
             }
         }
@@ -31,6 +35,10 @@ struct RepoListPanel: View {
 private struct RepoRow: View {
     let snapshot: RepoSnapshot
     let unread: Int
+    /// The owning account's color — the tile says *whose* repo it is; the
+    /// status label on the right says how it's doing.
+    let tint: Color
+    let accountLabel: String?
 
     @State private var isHovered = false
 
@@ -38,12 +46,15 @@ private struct RepoRow: View {
         HStack(spacing: 12) {
             ZStack(alignment: .topTrailing) {
                 RoundedRectangle(cornerRadius: 9)
-                    .fill(snapshot.state.color.opacity(0.14))
-                    .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(snapshot.state.color.opacity(0.4)))
+                    .fill(tint.opacity(0.14))
+                    .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(tint.opacity(0.4)))
                     .frame(width: 32, height: 32)
-                Image(systemName: "book.closed")
-                    .font(.system(size: 13))
-                    .foregroundStyle(snapshot.state.color)
+                // The provider's mark (template asset), in the account's color.
+                Image(snapshot.provider.logoAssetName)
+                    .resizable()
+                    .scaledToFit()
+                    .foregroundStyle(tint)
+                    .frame(width: 15, height: 15)
                     .frame(width: 32, height: 32)
                 if unread > 0 {
                     Text(unread > 9 ? "9+" : "\(unread)")
@@ -56,6 +67,7 @@ private struct RepoRow: View {
                         .accessibilityLabel("\(unread) unread notifications")
                 }
             }
+            .help(accountLabel ?? "")
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(snapshot.name)

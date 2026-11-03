@@ -7,6 +7,8 @@ struct InboxView: View {
     let isLoading: Bool
     /// True when no account's token can read notifications at all.
     let noAccountSupportsNotifications: Bool
+    /// What each connected provider's token needs to read notifications.
+    var accessHints: [String] = []
     let errorMessage: String?
     let onOpen: (NotificationStore.Entry) -> Void
     let onMarkAllRead: () -> Void
@@ -90,7 +92,7 @@ struct InboxView: View {
                 Text("Notifications aren't available")
                     .font(.system(size: 12.5, weight: .semibold))
                     .foregroundStyle(Palette.textPrimary)
-                Text("Your token can't read notifications. GitHub needs a classic token with the notifications (or repo) scope — fine-grained tokens can't read them.")
+                Text((["Your token can't read notifications."] + accessHints).joined(separator: " "))
                     .font(.system(size: 11))
                     .foregroundStyle(Palette.textMeta)
                     .multilineTextAlignment(.center)

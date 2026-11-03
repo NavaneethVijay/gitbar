@@ -1,0 +1,262 @@
+import Foundation
+
+// GitLab REST v4 / GraphQL wire types — private to the GitLab module. Mapped
+// to `Domain` types in GitLabMapping.swift; nothing outside Providers/GitLab
+// sees these. GitLab uses snake_case throughout, so the client decodes these
+// with the shared decoder and explicit CodingKeys.
+
+struct GitLabUser: Decodable {
+    let username: String
+    let name: String?
+    let avatarURL: URL?
+
+    enum CodingKeys: String, CodingKey {
+        case username, name
+        case avatarURL = "avatar_url"
+    }
+}
+
+struct GitLabUserRef: Decodable {
+    let username: String
+}
+
+struct GitLabProject: Decodable {
+    let pathWithNamespace: String
+    /// "private" / "internal" / "public".
+    let visibility: String?
+
+    enum CodingKeys: String, CodingKey {
+        case pathWithNamespace = "path_with_namespace"
+        case visibility
+    }
+}
+
+struct GitLabProjectInfo: Decodable {
+    let defaultBranch: String?
+    /// The project's default MR description (a Premium setting) — what
+    /// GitLab's own form prefills when no `Default` template exists.
+    let mergeRequestsTemplate: String?
+
+    enum CodingKeys: String, CodingKey {
+        case defaultBranch = "default_branch"
+        case mergeRequestsTemplate = "merge_requests_template"
+    }
+}
+
+struct GitLabBranch: Decodable {
+    let name: String
+}
+
+struct GitLabMergeRequest: Decodable {
+    /// Per-project number (`!12`) — GitLab's own `id` is instance-wide.
+    let iid: Int
+    let title: String
+    let author: GitLabUserRef?
+    /// "opened" / "closed" / "merged" / "locked".
+    let state: String?
+    let draft: Bool?
+    /// Pre-14.0 name for `draft`, still sent by older instances.
+    let workInProgress: Bool?
+    let reviewers: [GitLabUserRef]?
+    let sourceBranch: String
+    let targetBranch: String
+    let sha: String?
+    let description: String?
+    let createdAt: Date
+    let webURL: URL?
+
+    enum CodingKeys: String, CodingKey {
+        case iid, title, author, state, draft, reviewers, sha, description
+        case workInProgress = "work_in_progress"
+        case sourceBranch = "source_branch"
+        case targetBranch = "target_branch"
+        case createdAt = "created_at"
+        case webURL = "web_url"
+    }
+}
+
+struct GitLabIssue: Decodable {
+    let iid: Int
+    let title: String
+    let author: GitLabUserRef?
+    let createdAt: Date
+
+    enum CodingKeys: String, CodingKey {
+        case iid, title, author
+        case createdAt = "created_at"
+    }
+}
+
+struct GitLabPipeline: Decodable {
+    let id: Int
+    /// The project the pipeline ran in — the *source fork* for an MR from a
+    /// fork, not the MR's own project.
+    let projectID: Int?
+    let status: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, status
+        case projectID = "project_id"
+    }
+}
+
+struct GitLabJob: Decodable {
+    let name: String
+    let stage: String?
+    /// created, pending, running, failed, success, canceled, canceling,
+    /// skipped, manual, scheduled, preparing, waiting_for_resource…
+    let status: String
+    let allowFailure: Bool?
+    let webURL: URL?
+
+    enum CodingKeys: String, CodingKey {
+        case name, stage, status
+        case allowFailure = "allow_failure"
+        case webURL = "web_url"
+    }
+}
+
+struct GitLabNote: Decodable {
+    let id: Int
+    let body: String
+    let author: GitLabUserRef?
+    let createdAt: Date
+    /// Generated activity ("added 1 commit", "approved this merge request").
+    let system: Bool?
+    /// nil for a top-level comment, "DiscussionNote" for a thread reply,
+    /// "DiffNote" for an inline code comment.
+    let type: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, body, author, system, type
+        case createdAt = "created_at"
+    }
+}
+
+struct GitLabApprovals: Decodable {
+    struct Approver: Decodable { let user: GitLabUserRef }
+    let approvedBy: [Approver]?
+
+    enum CodingKeys: String, CodingKey {
+        case approvedBy = "approved_by"
+    }
+}
+
+/// One entry of `GET /merge_requests/:iid/reviewers` (GitLab 16+), which
+/// carries each requested reviewer's review state.
+struct GitLabReviewerState: Decodable {
+    let user: GitLabUserRef
+    /// "unreviewed" / "review_started" / "reviewed" / "requested_changes" /
+    /// "approved" / "unapproved".
+    let state: String?
+}
+
+struct GitLabDiff: Decodable {
+    let oldPath: String?
+    let newPath: String
+    let newFile: Bool?
+    let renamedFile: Bool?
+    let deletedFile: Bool?
+    /// Unified-diff hunks without the `---`/`+++` header; empty for binary
+    /// or collapsed files.
+    let diff: String?
+    let tooLarge: Bool?
+    let collapsed: Bool?
+
+    enum CodingKeys: String, CodingKey {
+        case diff, collapsed
+        case oldPath = "old_path"
+        case newPath = "new_path"
+        case newFile = "new_file"
+        case renamedFile = "renamed_file"
+        case deletedFile = "deleted_file"
+        case tooLarge = "too_large"
+    }
+}
+
+/// The deprecated `GET /merge_requests/:iid/changes` — only used on
+/// instances older than 15.7, which lack `/diffs`.
+struct GitLabChanges: Decodable {
+    let changes: [GitLabDiff]
+}
+
+struct GitLabTemplateSummary: Decodable {
+    let key: String?
+    let name: String
+}
+
+struct GitLabTemplate: Decodable {
+    let name: String
+    let content: String?
+}
+
+struct GitLabTokenInfo: Decodable {
+    let name: String?
+    let scopes: [String]
+}
+
+struct GitLabTodo: Decodable {
+    struct Project: Decodable {
+        let pathWithNamespace: String
+        enum CodingKeys: String, CodingKey { case pathWithNamespace = "path_with_namespace" }
+    }
+    struct Target: Decodable {
+        let iid: Int?
+        let title: String?
+    }
+
+    let id: Int
+    let project: Project?
+    /// assigned, mentioned, build_failed, marked, approval_required,
+    /// unmergeable, directly_addressed, review_requested, review_submitted…
+    let actionName: String
+    /// "MergeRequest", "Issue", "Commit", "Epic", …
+    let targetType: String
+    let target: Target?
+    let targetURL: URL?
+    let body: String?
+    let state: String?
+    let createdAt: Date
+    let updatedAt: Date?
+
+    enum CodingKeys: String, CodingKey {
+        case id, project, target, body, state
+        case actionName = "action_name"
+        case targetType = "target_type"
+        case targetURL = "target_url"
+        case createdAt = "created_at"
+        case updatedAt = "updated_at"
+    }
+}
+
+/// GitLab's error body: `message` is a string, a list, or a field → messages
+/// map depending on the endpoint; `error` on some auth failures.
+struct GitLabErrorBody: Decodable {
+    let text: String?
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: AnyKey.self)
+        if let message = try? container.decode(String.self, forKey: AnyKey("message")) {
+            text = message
+        } else if let list = try? container.decode([String].self, forKey: AnyKey("message")) {
+            text = list.joined(separator: "\n")
+        } else if let fields = try? container.decode([String: [String]].self, forKey: AnyKey("message")) {
+            text = fields.sorted { $0.key < $1.key }.flatMap { key, messages in
+                messages.map { key == "base" ? $0 : "\(key.replacingOccurrences(of: "_", with: " ").capitalized) \($0)" }
+            }.joined(separator: "\n")
+        } else if let error = (try? container.decode(String.self, forKey: AnyKey("error_description")))
+                    ?? (try? container.decode(String.self, forKey: AnyKey("error"))) {
+            text = error
+        } else {
+            text = nil
+        }
+    }
+
+    private struct AnyKey: CodingKey {
+        let stringValue: String
+        var intValue: Int? { nil }
+        init(_ string: String) { stringValue = string }
+        init?(stringValue: String) { self.stringValue = stringValue }
+        init?(intValue: Int) { nil }
+    }
+}

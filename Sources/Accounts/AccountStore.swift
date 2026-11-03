@@ -12,6 +12,19 @@ final class AccountStore: ObservableObject {
         load()
     }
 
+    /// The account's color: the one picked in Settings, else automatic by
+    /// its position (distinct until there are more accounts than colors).
+    func color(for id: UUID) -> AccountColor {
+        guard let index = accounts.firstIndex(where: { $0.id == id }) else { return .blue }
+        return accounts[index].resolvedColor(position: index)
+    }
+
+    func setColor(_ color: AccountColor, for id: UUID) {
+        guard let index = accounts.firstIndex(where: { $0.id == id }), accounts[index].color != color else { return }
+        accounts[index].color = color
+        persist()
+    }
+
     func accounts(for provider: ProviderKind) -> [Account] {
         accounts.filter { $0.provider == provider }
     }

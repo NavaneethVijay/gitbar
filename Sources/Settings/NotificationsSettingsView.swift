@@ -21,6 +21,13 @@ struct NotificationsSettingsView: View {
         .stateChange, .ciActivity, .author, .securityAlert, .subscribed, .manual,
     ]
 
+    /// One hint per connected provider (GitHub's when none are connected).
+    private var notificationHints: String {
+        let kinds = Set(accountStore.accounts.map(\.provider))
+        let connected = ProviderKind.allCases.filter { kinds.contains($0) && $0.isAvailable }
+        return (connected.isEmpty ? [.github] : connected).map(\.notificationsTokenHint).joined(separator: " ")
+    }
+
     var body: some View {
         Form {
             Section {
@@ -85,7 +92,7 @@ struct NotificationsSettingsView: View {
             } header: {
                 Text("Accounts")
             } footer: {
-                Text("GitHub needs a classic token with the notifications (or repo) scope — fine-grained tokens can't read notifications.")
+                Text(notificationHints)
                     .foregroundStyle(.secondary)
             }
         }

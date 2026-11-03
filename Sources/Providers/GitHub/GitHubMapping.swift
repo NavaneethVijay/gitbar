@@ -11,7 +11,8 @@ extension GitHubPullRequest {
             state: GitHubMapping.pullRequestState(rest: state, mergedAt: mergedAt), isDraft: draft,
             requestedReviewers: requestedReviewers.map(\.login),
             sourceBranch: head.ref, targetBranch: base.ref, headSHA: head.sha ?? "",
-            body: body ?? "", createdAt: createdAt, webURL: htmlURL
+            body: body ?? "", createdAt: createdAt, webURL: htmlURL,
+            diffURL: htmlURL?.appendingPathComponent("files")
         )
     }
 }
