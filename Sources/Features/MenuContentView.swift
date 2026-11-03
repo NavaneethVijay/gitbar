@@ -16,10 +16,15 @@ final class MenuViewModel {
 
     @ObservationIgnored let repoStore: LiveRepoStore
     @ObservationIgnored let notificationStore: NotificationStore
+    /// Standalone PR windows, opened from the PR screen's header.
+    @ObservationIgnored let prWindows: PRWindowManager
+    /// Set by `StatusItemController` — the PR screen only polls CI while shown.
+    @ObservationIgnored var isPopoverShown = false
 
     init(repoStore: LiveRepoStore, notificationStore: NotificationStore) {
         self.repoStore = repoStore
         self.notificationStore = notificationStore
+        self.prWindows = PRWindowManager(repoStore: repoStore)
     }
 
     /// An inbox row or a clicked alert: marks it read, then opens a PR from a
@@ -101,36 +106,21 @@ struct MenuContentView: View {
                     )
                     .transition(.move(edge: .trailing).combined(with: .opacity))
                 } else if let pr = selectedPullRequest, let repoID = model.selectedRepoID {
-                    PRDetailView(
+                    PRDetailScreen(
+                        repoStore: repoStore,
+                        repoID: repoID,
                         pr: pr,
-                        isLoadingChecks: repoStore.isLoadingChecks(repoID: repoID, prID: pr.id),
-                        isLoadingComments: repoStore.isLoadingComments(repoID: repoID, prID: pr.id),
-                        isLoadingReviewers: repoStore.isLoadingReviewers(repoID: repoID, prID: pr.id),
-                        isLoadingFiles: repoStore.isLoadingFiles(repoID: repoID, prID: pr.id),
-                        isSubmittingReview: repoStore.isSubmittingReview(repoID: repoID, prID: pr.id),
-                        reviewSubmitError: repoStore.reviewSubmitError(repoID: repoID, prID: pr.id),
-                        provider: repoStore.provider(for: repoID),
-                        canRequestChanges: repoStore.capabilities(for: repoID).supportsRequestChanges,
-                        onSubmitReview: { decision, body in
-                            Task { await repoStore.submitReview(repoID: repoID, prID: pr.id, decision: decision, body: body) }
-                        },
-                        onAddComment: { body in
-                            Task { await repoStore.addComment(repoID: repoID, prID: pr.id, body: body) }
-                        },
-                        isRefreshingDetail: repoStore.isRefreshingPRDetail(repoID: repoID, prID: pr.id),
-                        onRefresh: {
-                            Task { await repoStore.refreshPRDetail(repoID: repoID, prID: pr.id) }
-                        },
                         onBack: {
                             navigate {
                                 model.selectedPullRequestID = nil
                             }
-                        }
+                        },
+                        onOpenInWindow: { [model] in
+                            model.prWindows.open(repoID: repoID, prID: pr.id)
+                        },
+                        isVisible: { [model] in model.isPopoverShown }
                     )
                     .transition(.move(edge: .trailing).combined(with: .opacity))
-                    .task(id: pr.id) {
-                        repoStore.beginPRDetail(repoID: repoID, prID: pr.id)
-                    }
                 } else if let repo = selectedRepo, model.isCreatingPullRequest {
                     CreatePullRequestView(
                         repo: repo,

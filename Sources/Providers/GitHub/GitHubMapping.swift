@@ -7,7 +7,8 @@ import Foundation
 extension GitHubPullRequest {
     var domain: PullRequest {
         PullRequest(
-            number: id, title: title, author: user.login, isDraft: draft,
+            number: id, title: title, author: user.login,
+            state: GitHubMapping.pullRequestState(rest: state, mergedAt: mergedAt), isDraft: draft,
             requestedReviewers: requestedReviewers.map(\.login),
             sourceBranch: head.ref, targetBranch: base.ref, headSHA: head.sha ?? "",
             body: body ?? "", createdAt: createdAt, webURL: htmlURL
@@ -18,7 +19,7 @@ extension GitHubPullRequest {
 extension GitHubPullRequestFile {
     var domain: PullRequestFileChange {
         PullRequestFileChange(filename: filename, status: GitHubMapping.fileStatus(status),
-                              additions: additions, deletions: deletions)
+                              additions: additions, deletions: deletions, patch: patch)
     }
 }
 
@@ -30,7 +31,8 @@ extension GitHubIssue {
 
 extension GitHubCheckRun {
     var domain: CheckRun {
-        CheckRun(name: name, passed: conclusion == "success", isRunning: status != "completed", detailsURL: detailsURL)
+        CheckRun(name: name, status: GitHubMapping.checkRunStatus(status: status, conclusion: conclusion),
+                 detailsURL: detailsURL)
     }
 }
 
@@ -157,6 +159,44 @@ enum GitHubMapping {
         case "changed": return .changed
         case "unchanged": return .unchanged
         default: return .modified
+        }
+    }
+
+    /// REST reports merged PRs as "closed" plus a `merged_at` timestamp.
+    static func pullRequestState(rest state: String?, mergedAt: Date?) -> PullRequestState {
+        if mergedAt != nil { return .merged }
+        return state == "closed" ? .closed : .open
+    }
+
+    /// GraphQL's `PullRequestState` enum.
+    static func pullRequestState(graphQL state: String?) -> PullRequestState {
+        switch state {
+        case "MERGED": return .merged
+        case "CLOSED": return .closed
+        default: return .open
+        }
+    }
+
+    /// GraphQL's `reviewDecision` — `nil` when the repo requires no review
+    /// and nobody has given a verdict.
+    static func reviewStatus(_ decision: String?) -> PullRequestReviewStatus? {
+        switch decision {
+        case "APPROVED": return .approved
+        case "CHANGES_REQUESTED": return .changesRequested
+        case "REVIEW_REQUIRED": return .reviewRequired
+        default: return nil
+        }
+    }
+
+    /// A check run's `status` ("queued"/"in_progress"/"completed"/"waiting"/
+    /// "requested"/"pending") and, once completed, its `conclusion`.
+    static func checkRunStatus(status: String, conclusion: String?) -> CheckRunStatus {
+        guard status == "completed" else { return .running }
+        switch conclusion {
+        case "success": return .passed
+        case "skipped": return .skipped
+        case "neutral": return .neutral
+        default: return .failed  // failure, cancelled, timed_out, action_required, stale, startup_failure
         }
     }
 

@@ -92,18 +92,51 @@ final class LinkCursorTextView: NSTextView {
         return textView
     }
 
-    override func resetCursorRects() {
-        super.resetCursorRects()
-        guard let textStorage, let layoutManager, let textContainer else { return }
-        textStorage.enumerateAttribute(.link, in: NSRange(location: 0, length: textStorage.length)) { value, range, _ in
-            guard value != nil else { return }
-            let glyphRange = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
-            layoutManager.enumerateEnclosingRects(forGlyphRange: glyphRange,
-                                                  withinSelectedGlyphRange: NSRange(location: NSNotFound, length: 0),
-                                                  in: textContainer) { rect, _ in
-                self.addCursorRect(rect, cursor: .pointingHand)
-            }
+    /// Cursor rects alone lose to `NSTextView`, which re-sets the I-beam
+    /// from its own `mouseMoved`/`cursorUpdate` on every move — so the cursor
+    /// is decided per event instead: pointing hand over a link, else the
+    /// text view's own behavior. `.activeAlways` because the popover isn't
+    /// always key while hovered.
+    private var linkTrackingArea: NSTrackingArea?
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let linkTrackingArea { removeTrackingArea(linkTrackingArea) }
+        let area = NSTrackingArea(rect: .zero,
+                                  options: [.mouseMoved, .cursorUpdate, .activeAlways, .inVisibleRect],
+                                  owner: self, userInfo: nil)
+        addTrackingArea(area)
+        linkTrackingArea = area
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        if isOverLink(event) {
+            NSCursor.pointingHand.set()
+        } else {
+            super.mouseMoved(with: event)
         }
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        if isOverLink(event) {
+            NSCursor.pointingHand.set()
+        } else {
+            super.cursorUpdate(with: event)
+        }
+    }
+
+    private func isOverLink(_ event: NSEvent) -> Bool {
+        guard let layoutManager, let textContainer, let textStorage, textStorage.length > 0 else { return false }
+        let local = convert(event.locationInWindow, from: nil)
+        let point = NSPoint(x: local.x - textContainerOrigin.x, y: local.y - textContainerOrigin.y)
+        let glyphIndex = layoutManager.glyphIndex(for: point, in: textContainer)
+        // `glyphIndex(for:)` snaps to the nearest glyph — only count a hit
+        // actually inside it, not anywhere on the line past a link's end.
+        let glyphRect = layoutManager.boundingRect(forGlyphRange: NSRange(location: glyphIndex, length: 1), in: textContainer)
+        guard glyphRect.contains(point) else { return false }
+        let charIndex = layoutManager.characterIndexForGlyph(at: glyphIndex)
+        guard charIndex < textStorage.length else { return false }
+        return textStorage.attribute(.link, at: charIndex, effectiveRange: nil) != nil
     }
 }
 

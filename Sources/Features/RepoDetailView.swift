@@ -361,17 +361,9 @@ private struct PullRequestRow: View {
                 .font(.system(size: 11))
                 .foregroundStyle(Palette.textSecondary)
             HStack {
-                Text(pr.checksLabel)
-                    .font(.system(size: 10.5, weight: .semibold))
-                    .foregroundStyle(pr.checksColor)
+                ChecksStatusLabel(pr: pr)
                 Spacer()
-                Text(pr.chipLabel)
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(pr.chipColor)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 2.5)
-                    .background(Capsule().fill(pr.chipColor.opacity(0.14)))
-                    .overlay(Capsule().strokeBorder(pr.chipColor.opacity(0.35)))
+                StatusPill(chip: pr.status)
             }
             .padding(.top, 2)
         }

@@ -29,44 +29,48 @@ struct PRDetailView: View {
     var isRefreshingDetail: Bool = false
     var onRefresh: () -> Void = {}
     var onBack: () -> Void = {}
+    /// In its own window: flexible size, no back button.
+    var isWindowed = false
+    /// Pops the PR out into its own window; hidden when `nil`.
+    var onOpenInWindow: (() -> Void)?
+    /// The repo's path, for the window's subtitle.
+    var repoPath: String = ""
+    /// Re-fetches the check runs — called every `checksPollInterval` while
+    /// CI is running and this screen is up.
+    var onPollChecks: () async -> Void = {}
+
+    private static let checksPollInterval: Duration = .seconds(20)
 
     @State private var reviewDraft = ""
     @State private var showReviewSubmittedToast = false
     /// What the in-flight submission was, for the toast's wording.
     @State private var submittedComment = false
+    /// Window only: files whose diff is open, by filename.
+    @State private var expandedFiles: Set<String> = []
 
     private var draftIsEmpty: Bool {
         reviewDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    /// The window's content column: wide windows center it rather than
+    /// stretching lines of text edge to edge.
+    private static let readableWidth: CGFloat = 820
+
+    private var horizontalPadding: CGFloat { isWindowed ? 24 : 14 }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
-            divider
-
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
-                    metaRow
-                    divider
-                    branchRow
-                    divider
-                    description
-                    divider
-                    reviewersSection
-                    divider
-                    checksSection
-                    divider
-                    filesSection
-                    divider
-                    commentsSection
-                }
+        layout
+        .modifier(PRDetailFrame(isWindowed: isWindowed))
+        // Live CI: while anything is running, keep re-reading the check runs
+        // so spinners turn into results without a manual refresh.
+        .task(id: pr.areChecksRunning) {
+            guard pr.areChecksRunning else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(for: Self.checksPollInterval)
+                guard !Task.isCancelled else { return }
+                await onPollChecks()
             }
-            .frame(maxHeight: .infinity)
-
-            divider
-            composer
         }
-        .frame(width: PRDetailMetrics.width, height: PRDetailMetrics.height, alignment: .top)
         .overlay(alignment: .top) {
             if showReviewSubmittedToast {
                 ReviewSubmittedToast(title: submittedComment ? "Comment posted" : "Review submitted")
@@ -89,6 +93,156 @@ struct PRDetailView: View {
         }
     }
 
+    @ViewBuilder
+    private var layout: some View {
+        if isWindowed {
+            windowLayout
+        } else {
+            popoverLayout
+        }
+    }
+
+    /// Fixed-size popover screen: header and composer pinned, sections scroll.
+    private var popoverLayout: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            divider
+
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    sections
+                }
+            }
+            .frame(maxHeight: .infinity)
+
+            divider
+            composer
+        }
+    }
+
+    /// Standalone window, current macOS style: actions live in the unified
+    /// titlebar as glass toolbar buttons, the title and repo in the titlebar,
+    /// and everything else scrolls under it in one readable column.
+    private var windowLayout: some View {
+        VStack(spacing: 0) {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    header
+                    divider
+                    sections
+                }
+                .frame(maxWidth: Self.readableWidth)
+                .frame(maxWidth: .infinity)
+                .padding(.bottom, 8)
+            }
+            .frame(maxHeight: .infinity)
+
+            divider
+            composer
+                .frame(maxWidth: Self.readableWidth)
+                .frame(maxWidth: .infinity)
+        }
+        .navigationTitle(pr.title)
+        .navigationSubtitle(repoPath.isEmpty ? provider.formatNumber(pr.id)
+                                             : "\(repoPath) \(provider.formatNumber(pr.id))")
+        .toolbar { windowToolbar }
+    }
+
+    @ToolbarContentBuilder
+    private var windowToolbar: some ToolbarContent {
+        ToolbarItemGroup {
+            if let url = pr.webURL {
+                Button("Copy Link", systemImage: "link") { copyToPasteboard(url.absoluteString) }
+                    .help("Copy link")
+                Button("Open in Browser", systemImage: "safari") { NSWorkspace.shared.open(url) }
+                    .help("Open in browser")
+            }
+        }
+        ToolbarItem {
+            if isRefreshingDetail {
+                ProgressView().controlSize(.small)
+                    .help("Refreshing…")
+            } else {
+                Button("Refresh", systemImage: "arrow.clockwise", action: onRefresh)
+                    .help("Refresh")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var sections: some View {
+        metaRow
+        divider
+        branchRow
+        divider
+        description
+        divider
+        reviewersSection
+        divider
+        checksSection
+        divider
+        if isWindowed {
+            windowFilesSection
+        } else {
+            filesSection
+        }
+        divider
+        commentsSection
+    }
+
+    /// Each file is its own row of the enclosing `LazyVStack`, so a PR with
+    /// 100 files only builds the ones scrolled into view.
+    @ViewBuilder
+    private var windowFilesSection: some View {
+        HStack(spacing: 10) {
+            SectionLabel("Files changed · \(pr.files.count)")
+            Spacer(minLength: 0)
+            if !pr.files.isEmpty {
+                let allOpen = expandedFiles.count >= pr.files.count
+                Button(allOpen ? "Collapse All" : "Expand All") {
+                    expandedFiles = allOpen ? [] : Set(pr.files.map(\.id))
+                }
+                .buttonStyle(.link)
+                .font(.system(size: 10.5, weight: .semibold))
+            }
+            if let diffURL = pr.diffURL {
+                ViewDiffLink(url: diffURL)
+            }
+        }
+        .padding(.horizontal, horizontalPadding)
+        .padding(.top, 12)
+        .padding(.bottom, pr.files.isEmpty ? 4 : 8)
+
+        if pr.files.isEmpty {
+            Group {
+                if isLoadingFiles {
+                    loadingRow
+                } else {
+                    Text("No file changes.")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Palette.textTertiary)
+                }
+            }
+            .padding(.horizontal, horizontalPadding)
+            .padding(.bottom, 12)
+        } else {
+            ForEach(pr.files) { file in
+                DiffFileView(
+                    file: file,
+                    webDiffURL: pr.diffURL,
+                    isExpanded: Binding(
+                        get: { expandedFiles.contains(file.id) },
+                        set: { open in
+                            if open { expandedFiles.insert(file.id) } else { expandedFiles.remove(file.id) }
+                        })
+                )
+                .padding(.horizontal, horizontalPadding - 4)
+                .padding(.bottom, 4)
+            }
+            Color.clear.frame(height: 8)
+        }
+    }
+
     private var divider: some View {
         Rectangle().fill(Palette.wash.opacity(0.07)).frame(height: 1)
     }
@@ -104,39 +258,45 @@ struct PRDetailView: View {
 
     private var header: some View {
         HStack(alignment: .top, spacing: 10) {
-            BackButton(action: onBack)
-                .padding(.top, 1)
+            if !isWindowed {
+                BackButton(action: onBack)
+                    .padding(.top, 1)
+            }
 
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 8) {
-                    Text(pr.source.isDraft ? "Draft" : "Open")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(stateColor)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 2)
-                        .background(Capsule().fill(stateColor.opacity(0.14)))
-                        .overlay(Capsule().strokeBorder(stateColor.opacity(0.35)))
-                    Text(provider.formatNumber(pr.id))
-                        .font(.system(size: 11))
-                        .foregroundStyle(Palette.tabIdle)
+                    StatusPill(chip: pr.status)
+                    if let url = pr.webURL {
+                        PRNumberLink(text: provider.formatNumber(pr.id), url: url)
+                    } else {
+                        Text(provider.formatNumber(pr.id))
+                            .font(.system(size: 11))
+                            .foregroundStyle(Palette.tabIdle)
+                    }
                 }
                 Text(pr.title)
-                    .font(.system(size: 14, weight: .semibold))
+                    .font(.system(size: isWindowed ? 16 : 14, weight: .semibold))
                     .foregroundStyle(Palette.textPrimary)
+                    .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
+                if let url = pr.webURL {
+                    PRLinkRow(url: url)
+                }
             }
 
             Spacer(minLength: 4)
 
-            RefreshButton(isRefreshing: isRefreshingDetail, action: onRefresh)
-                .padding(.top, 1)
+            if !isWindowed {
+                if let onOpenInWindow {
+                    HeaderIconButton(systemImage: "macwindow", help: "Open in a separate window", action: onOpenInWindow)
+                        .padding(.top, 1)
+                }
+                RefreshButton(isRefreshing: isRefreshingDetail, action: onRefresh)
+                    .padding(.top, 1)
+            }
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
-    }
-
-    private var stateColor: Color {
-        pr.source.isDraft ? Palette.neutral : RepoActivityState.idle.color
+        .padding(.horizontal, horizontalPadding)
+        .padding(.vertical, isWindowed ? 16 : 12)
     }
 
     private var metaRow: some View {
@@ -151,7 +311,7 @@ struct PRDetailView: View {
                 .foregroundStyle(Palette.textSecondary)
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, horizontalPadding)
         .padding(.vertical, 10)
     }
 
@@ -164,7 +324,7 @@ struct PRDetailView: View {
             BranchChip(name: pr.baseBranch)
             Spacer(minLength: 0)
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, horizontalPadding)
         .padding(.vertical, 10)
     }
 
@@ -172,7 +332,7 @@ struct PRDetailView: View {
         RenderedBodyText(markdown: pr.description, fontSize: 12, textColor: Palette.textBody)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.horizontal, 14)
+            .padding(.horizontal, horizontalPadding)
             .padding(.vertical, 12)
     }
 
@@ -193,15 +353,23 @@ struct PRDetailView: View {
                 }
             }
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, horizontalPadding)
         .padding(.vertical, 12)
     }
 
     private var checksSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            SectionLabel("Checks")
+            HStack(spacing: 8) {
+                SectionLabel("Checks")
+                Spacer(minLength: 0)
+                ChecksStatusLabel(pr: pr, fontSize: 10.5)
+            }
             if pr.checks.isEmpty && isLoadingChecks {
                 loadingRow
+            } else if pr.checks.isEmpty {
+                Text("No checks reported.")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Palette.textTertiary)
             }
             VStack(spacing: 6) {
                 ForEach(pr.checks) { check in
@@ -209,7 +377,7 @@ struct PRDetailView: View {
                 }
             }
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, horizontalPadding)
         .padding(.vertical, 12)
     }
 
@@ -236,7 +404,7 @@ struct PRDetailView: View {
                 }
             }
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, horizontalPadding)
         .padding(.vertical, 12)
     }
 
@@ -257,7 +425,7 @@ struct PRDetailView: View {
                 }
             }
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, horizontalPadding)
         .padding(.vertical, 12)
     }
 
@@ -290,31 +458,63 @@ struct PRDetailView: View {
                     .padding(6)
                     .disabled(isSubmittingReview)
             }
-            .frame(height: 52)
+            .frame(height: isWindowed ? 72 : 52)
 
             HStack(spacing: 8) {
                 if isSubmittingReview {
                     ProgressView().controlSize(.small).scaleEffect(0.7)
                 }
                 Spacer(minLength: 0)
-                ReviewActionButton(title: "Comment", color: Palette.neutral, isDisabled: isSubmittingReview || draftIsEmpty) {
-                    submittedComment = true
-                    onAddComment(reviewDraft)
-                }
-                if canRequestChanges {
-                    ReviewActionButton(title: "Request changes", color: Palette.danger, isDisabled: isSubmittingReview) {
-                        submittedComment = false
-                        onSubmitReview(.requestChanges, reviewDraft)
+                if isWindowed {
+                    nativeReviewActions
+                } else {
+                    ReviewActionButton(title: "Comment", color: Palette.neutral, isDisabled: isSubmittingReview || draftIsEmpty) {
+                        submittedComment = true
+                        onAddComment(reviewDraft)
                     }
-                }
-                ReviewActionButton(title: "Approve", color: RepoActivityState.idle.color, isDisabled: isSubmittingReview) {
-                    submittedComment = false
-                    onSubmitReview(.approve, reviewDraft)
+                    if canRequestChanges {
+                        ReviewActionButton(title: "Request changes", color: Palette.danger, isDisabled: isSubmittingReview) {
+                            submittedComment = false
+                            onSubmitReview(.requestChanges, reviewDraft)
+                        }
+                    }
+                    ReviewActionButton(title: "Approve", color: RepoActivityState.idle.color, isDisabled: isSubmittingReview) {
+                        submittedComment = false
+                        onSubmitReview(.approve, reviewDraft)
+                    }
                 }
             }
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, horizontalPadding)
         .padding(.vertical, 12)
+    }
+}
+
+private extension PRDetailView {
+    /// Stock buttons in the window — the system draws them in the current
+    /// macOS style (Liquid Glass on 26) instead of the popover's pills.
+    @ViewBuilder
+    var nativeReviewActions: some View {
+        Button("Comment") {
+            submittedComment = true
+            onAddComment(reviewDraft)
+        }
+        .disabled(isSubmittingReview || draftIsEmpty)
+        if canRequestChanges {
+            Button("Request Changes") {
+                submittedComment = false
+                onSubmitReview(.requestChanges, reviewDraft)
+            }
+            .tint(Palette.danger)
+            .disabled(isSubmittingReview)
+        }
+        Button("Approve") {
+            submittedComment = false
+            onSubmitReview(.approve, reviewDraft)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(RepoActivityState.idle.color)
+        .disabled(isSubmittingReview)
     }
 }
 
@@ -392,13 +592,20 @@ private struct CheckRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: check.passed ? "checkmark.circle.fill" : "xmark.circle.fill")
-                .font(.system(size: 13))
-                .foregroundStyle(check.passed ? RepoActivityState.idle.color : Palette.danger)
+            icon.frame(width: 14, height: 14)
             Text(check.name)
                 .font(.system(size: 11.5))
                 .foregroundStyle(Palette.textStrong)
             Spacer(minLength: 0)
+            if check.status == .running {
+                Text("Running…")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Palette.textTertiary)
+            } else if check.status == .skipped {
+                Text("Skipped")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Palette.textTertiary)
+            }
             if let url = check.detailsURL {
                 Text("Details")
                     .font(.system(size: 10.5, weight: .semibold))
@@ -407,6 +614,31 @@ private struct CheckRow: View {
                     .onTapGesture { NSWorkspace.shared.open(url) }
                     .hoverHighlight($isHovered)
             }
+        }
+    }
+
+    @ViewBuilder
+    private var icon: some View {
+        switch check.status {
+        case .running:
+            SpinningArc(color: RepoActivityState.busy.color, arcFraction: 0.6)
+                .frame(width: 11, height: 11)
+        case .passed:
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 13))
+                .foregroundStyle(RepoActivityState.idle.color)
+        case .failed:
+            Image(systemName: "xmark.circle.fill")
+                .font(.system(size: 13))
+                .foregroundStyle(Palette.danger)
+        case .skipped:
+            Image(systemName: "minus.circle")
+                .font(.system(size: 13))
+                .foregroundStyle(Palette.neutral)
+        case .neutral:
+            Image(systemName: "circle")
+                .font(.system(size: 13))
+                .foregroundStyle(Palette.neutral)
         }
     }
 }
@@ -427,7 +659,8 @@ private struct ViewDiffLink: View {
     }
 }
 
-private struct FileChangeRow: View {
+/// One file's line in the list — also the header of `DiffFileView`.
+struct FileChangeRow: View {
     let file: PRFileChange
 
     private var glyph: String {
@@ -549,6 +782,216 @@ private struct CommentBubble: View {
                     .padding(10)
                     .background(RoundedRectangle(cornerRadius: 10).fill(Palette.wash.opacity(0.04)))
             }
+        }
+    }
+}
+
+/// Popover: the fixed size from `PRDetailMetrics`. Window: fills it.
+private struct PRDetailFrame: ViewModifier {
+    let isWindowed: Bool
+
+    func body(content: Content) -> some View {
+        if isWindowed {
+            content.frame(minWidth: 460, maxWidth: .infinity, minHeight: 480, maxHeight: .infinity, alignment: .top)
+        } else {
+            content.frame(width: PRDetailMetrics.width, height: PRDetailMetrics.height, alignment: .top)
+        }
+    }
+}
+
+/// The PR's state as a colored pill — also used by the repo screen's rows.
+struct StatusPill: View {
+    let chip: PRStatusChip
+    var fontSize: CGFloat = 10
+
+    var body: some View {
+        Text(chip.label)
+            .font(.system(size: fontSize, weight: .bold))
+            .foregroundStyle(chip.color)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 2.5)
+            .background(Capsule().fill(chip.color.opacity(0.14)))
+            .overlay(Capsule().strokeBorder(chip.color.opacity(0.35)))
+    }
+}
+
+/// Combined CI status: a spinner while anything is still running, else the
+/// static label. Empty until the summary (or the check runs) arrive.
+struct ChecksStatusLabel: View {
+    let pr: RepoPullRequest
+    var fontSize: CGFloat = 10.5
+
+    var body: some View {
+        if pr.areChecksRunning {
+            HStack(spacing: 5) {
+                SpinningArc(color: RepoActivityState.busy.color, arcFraction: 0.6)
+                    .frame(width: fontSize - 1, height: fontSize - 1)
+                Text("Checks running")
+                    .font(.system(size: fontSize, weight: .semibold))
+                    .foregroundStyle(RepoActivityState.busy.color)
+            }
+        } else if !pr.checksLabel.isEmpty {
+            Text(pr.checksLabel)
+                .font(.system(size: fontSize, weight: .semibold))
+                .foregroundStyle(pr.checksColor)
+        }
+    }
+}
+
+/// `#12` next to the status pill — opens the PR on the web.
+private struct PRNumberLink: View {
+    let text: String
+    let url: URL
+
+    @State private var isHovered = false
+
+    var body: some View {
+        HStack(spacing: 2) {
+            Text(text)
+            Image(systemName: "arrow.up.right")
+                .font(.system(size: 8, weight: .bold))
+        }
+        .font(.system(size: 11, weight: .semibold))
+        .foregroundStyle(isHovered ? Palette.accentHover : Palette.accent)
+        .contentShape(Rectangle())
+        .onTapGesture { NSWorkspace.shared.open(url) }
+        .hoverHighlight($isHovered)
+        .help("Open in browser")
+        .contextMenu { LinkMenuItems(url: url) }
+    }
+}
+
+/// The PR's web address under its title: click to open, copy button beside it.
+private struct PRLinkRow: View {
+    let url: URL
+
+    @State private var isHovered = false
+    @State private var copied = false
+
+    private var displayText: String {
+        var text = url.absoluteString
+        for prefix in ["https://", "http://"] where text.hasPrefix(prefix) {
+            text.removeFirst(prefix.count)
+        }
+        return text
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "link")
+                .font(.system(size: 9.5, weight: .semibold))
+                .foregroundStyle(Palette.textTertiary)
+            Text(displayText)
+                .font(.system(size: 10.5))
+                .foregroundStyle(isHovered ? Palette.accentHover : Palette.accent)
+                .underline(isHovered)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .contentShape(Rectangle())
+                .onTapGesture { NSWorkspace.shared.open(url) }
+                .hoverHighlight($isHovered)
+                .help(url.absoluteString)
+                .contextMenu { LinkMenuItems(url: url) }
+            Button {
+                copyToPasteboard(url.absoluteString)
+                withAnimation(.easeOut(duration: 0.15)) { copied = true }
+                Task {
+                    try? await Task.sleep(for: .seconds(1.5))
+                    withAnimation(.easeOut(duration: 0.2)) { copied = false }
+                }
+            } label: {
+                Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                    .font(.system(size: 9.5, weight: .semibold))
+                    .foregroundStyle(copied ? RepoActivityState.idle.color : Palette.textTertiary)
+                    .frame(width: 16, height: 16)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .pointerStyle(.link)
+            .help("Copy link")
+        }
+    }
+}
+
+private struct LinkMenuItems: View {
+    let url: URL
+    var body: some View {
+        Button("Open in Browser") { NSWorkspace.shared.open(url) }
+        Button("Copy Link") { copyToPasteboard(url.absoluteString) }
+    }
+}
+
+private func copyToPasteboard(_ string: String) {
+    NSPasteboard.general.clearContents()
+    NSPasteboard.general.setString(string, forType: .string)
+}
+
+/// A round icon button matching `RefreshButton`.
+private struct HeaderIconButton: View {
+    let systemImage: String
+    let help: String
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Palette.textSecondary)
+                .frame(width: 26, height: 26)
+                .background(Circle().fill(Palette.wash.opacity(isHovered ? 0.1 : 0)))
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .hoverHighlight($isHovered)
+    }
+}
+
+/// `PRDetailView` wired to the store — shared by the popover's PR screen and
+/// the standalone PR window, so both behave identically.
+struct PRDetailScreen: View {
+    let repoStore: LiveRepoStore
+    let repoID: RepoRef
+    let pr: RepoPullRequest
+    var isWindowed = false
+    var onBack: () -> Void = {}
+    var onOpenInWindow: (() -> Void)?
+    /// Whether the screen is actually on screen — no CI polling otherwise.
+    var isVisible: @MainActor () -> Bool = { true }
+
+    var body: some View {
+        PRDetailView(
+            pr: pr,
+            isLoadingChecks: repoStore.isLoadingChecks(repoID: repoID, prID: pr.id),
+            isLoadingComments: repoStore.isLoadingComments(repoID: repoID, prID: pr.id),
+            isLoadingReviewers: repoStore.isLoadingReviewers(repoID: repoID, prID: pr.id),
+            isLoadingFiles: repoStore.isLoadingFiles(repoID: repoID, prID: pr.id),
+            isSubmittingReview: repoStore.isSubmittingReview(repoID: repoID, prID: pr.id),
+            reviewSubmitError: repoStore.reviewSubmitError(repoID: repoID, prID: pr.id),
+            provider: repoStore.provider(for: repoID),
+            canRequestChanges: repoStore.capabilities(for: repoID).supportsRequestChanges,
+            onSubmitReview: { decision, body in
+                Task { await repoStore.submitReview(repoID: repoID, prID: pr.id, decision: decision, body: body) }
+            },
+            onAddComment: { body in
+                Task { await repoStore.addComment(repoID: repoID, prID: pr.id, body: body) }
+            },
+            isRefreshingDetail: repoStore.isRefreshingPRDetail(repoID: repoID, prID: pr.id),
+            onRefresh: {
+                Task { await repoStore.refreshPRDetail(repoID: repoID, prID: pr.id) }
+            },
+            onBack: onBack,
+            isWindowed: isWindowed,
+            onOpenInWindow: onOpenInWindow,
+            repoPath: repoID.path,
+            onPollChecks: { @MainActor in
+                guard isVisible() else { return }
+                await repoStore.refreshChecks(repoID: repoID, prID: pr.id)
+            }
+        )
+        .task(id: pr.id) {
+            repoStore.beginPRDetail(repoID: repoID, prID: pr.id)
         }
     }
 }

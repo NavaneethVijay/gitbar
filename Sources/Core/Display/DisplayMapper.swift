@@ -6,22 +6,13 @@ import SwiftUI
 /// anything — it returns `Domain` values and gets this app's look for free.
 enum DisplayMapper {
     /// A PR row. `login` is the account's own user, for "Review requested".
-    /// The CI label starts blank — `checksLabel(for:)` fills it in once
-    /// `checkSummaries` arrives.
+    /// The CI label and review verdict start blank — `statusSummary` fills
+    /// them in once `statusSummaries` arrives.
     static func pullRequest(_ pr: PullRequest, login: String) -> RepoPullRequest {
-        let chipLabel: String
-        let chipColor: Color
-        if pr.isDraft {
-            chipLabel = "Draft"; chipColor = Palette.neutral
-        } else if pr.requestedReviewers.contains(login) {
-            chipLabel = "Review requested"; chipColor = RepoActivityState.needsAttention.color
-        } else {
-            chipLabel = "Open"; chipColor = RepoActivityState.idle.color
-        }
-        return RepoPullRequest(
+        RepoPullRequest(
             id: pr.number, title: pr.title, author: pr.author, initials: initials(for: pr.author),
-            checksLabel: "", checksColor: Palette.neutral,
-            chipLabel: chipLabel, chipColor: chipColor,
+            statusSummary: nil,
+            isReviewRequestedFromMe: pr.requestedReviewers.contains(login),
             openedAgo: relativeTime(from: pr.createdAt),
             headBranch: pr.sourceBranch, baseBranch: pr.targetBranch,
             description: pr.body,
@@ -29,6 +20,36 @@ enum DisplayMapper {
             diffURL: pr.webURL?.appendingPathComponent("files"),
             source: pr
         )
+    }
+
+    /// The status pill, most decisive first: merged/closed, draft, your own
+    /// review being asked for, then the review verdict — the provider's own
+    /// when it reported one, else derived from the loaded reviewers.
+    static func statusChip(for pr: RepoPullRequest) -> PRStatusChip {
+        switch pr.source.state {
+        case .merged: return PRStatusChip(label: "Merged", color: Palette.accentPurple)
+        case .closed: return PRStatusChip(label: "Closed", color: Palette.danger)
+        case .open: break
+        }
+        if pr.source.isDraft { return PRStatusChip(label: "Draft", color: Palette.neutral) }
+        if pr.isReviewRequestedFromMe {
+            return PRStatusChip(label: "Review requested", color: RepoActivityState.needsAttention.color)
+        }
+        switch pr.statusSummary?.review ?? reviewStatus(from: pr.reviewers) {
+        case .changesRequested: return PRStatusChip(label: "Changes requested", color: Palette.danger)
+        case .approved: return PRStatusChip(label: "Approved", color: RepoActivityState.idle.color)
+        case .reviewRequired: return PRStatusChip(label: "Review required", color: Palette.attention)
+        case nil: return PRStatusChip(label: "Open", color: RepoActivityState.idle.color)
+        }
+    }
+
+    /// A fallback verdict from individual reviews, for when the provider
+    /// hasn't reported its own yet.
+    private static func reviewStatus(from reviewers: [PRReviewer]) -> PullRequestReviewStatus? {
+        if reviewers.contains(where: { $0.state == .changesRequested }) { return .changesRequested }
+        if reviewers.contains(where: { $0.state == .pending }) { return .reviewRequired }
+        if reviewers.contains(where: { $0.state == .approved }) { return .approved }
+        return nil
     }
 
     static func issue(_ issue: Issue) -> RepoIssue {
@@ -49,7 +70,7 @@ enum DisplayMapper {
 
     static func check(_ run: CheckRun) -> PRCheck {
         PRCheck(id: run.name + "|" + (run.detailsURL?.absoluteString ?? ""),
-                name: run.name, passed: run.passed, detailsURL: run.detailsURL)
+                name: run.name, status: run.status, detailsURL: run.detailsURL)
     }
 
     static func comment(_ comment: Comment) -> PRComment {
@@ -65,7 +86,7 @@ enum DisplayMapper {
 
     static func fileChange(_ file: PullRequestFileChange) -> PRFileChange {
         PRFileChange(filename: file.filename, status: file.status,
-                    additions: file.additions, deletions: file.deletions)
+                    additions: file.additions, deletions: file.deletions, patch: file.patch)
     }
 
     /// The repo-list row. `recentPulls`/`recentIssues` are the cheap tier's

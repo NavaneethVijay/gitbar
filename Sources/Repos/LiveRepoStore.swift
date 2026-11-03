@@ -318,13 +318,7 @@ final class LiveRepoStore {
             let oldByID = Dictionary(old.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
             let fresh = prs.items.map { item -> RepoPullRequest in
                 var mapped = DisplayMapper.pullRequest(item, login: account.login)
-                if let previous = oldByID[mapped.id] {
-                    mapped.checksLabel = previous.checksLabel
-                    mapped.checksColor = previous.checksColor
-                    mapped.checks = previous.checks
-                    mapped.comments = previous.comments
-                    mapped.reviewers = previous.reviewers
-                }
+                if let previous = oldByID[mapped.id] { mapped.keepLoadedDetail(from: previous) }
                 return mapped
             }
             assign(\.detailPullRequests[repoID], Self.mergeFirstPage(fresh, into: old, oldFirstPageCount: prs.items.count))
@@ -411,13 +405,7 @@ final class LiveRepoStore {
             let existingIDs = Set(old.map(\.id))
             let fresh = page.items.map { item -> RepoPullRequest in
                 var mapped = DisplayMapper.pullRequest(item, login: login)
-                if let previous = known[mapped.id] {
-                    mapped.checksLabel = previous.checksLabel
-                    mapped.checksColor = previous.checksColor
-                    mapped.checks = previous.checks
-                    mapped.comments = previous.comments
-                    mapped.reviewers = previous.reviewers
-                }
+                if let previous = known[mapped.id] { mapped.keepLoadedDetail(from: previous) }
                 return mapped
             }.filter { !existingIDs.contains($0.id) }
             assign(\.minePullRequests[repoID], old + fresh)
@@ -605,12 +593,7 @@ final class LiveRepoStore {
 
         var mapped = DisplayMapper.pullRequest(fresh, login: account.login)
         // Keep the last known values on screen while they're re-fetched.
-        mapped.checksLabel = existing.checksLabel
-        mapped.checksColor = existing.checksColor
-        mapped.checks = existing.checks
-        mapped.comments = existing.comments
-        mapped.reviewers = existing.reviewers
-        mapped.files = existing.files
+        mapped.keepLoadedDetail(from: existing)
         Task { await loadCheckSummaries(repoID: repoID, numbers: [prID]) }
 
         async let checksResult = try? withRateLimitBackoff { try await client.checks(repo: path, pullRequest: fresh) }
@@ -725,20 +708,31 @@ final class LiveRepoStore {
         guard !numbers.isEmpty, let (_, client) = resolve(repoID) else { return }
         let path = repoID.path
         guard let summaries = try? await withRateLimitBackoff({
-            try await client.checkSummaries(repo: path, numbers: numbers)
+            try await client.statusSummaries(repo: path, numbers: numbers)
         }) else { return }
 
         for (number, summary) in summaries {
-            let (label, color) = DisplayMapper.checksLabel(for: summary)
-            updatePullRequest(repoID: repoID, prID: number) {
-                $0.checksLabel = label
-                $0.checksColor = color
-            }
+            updatePullRequest(repoID: repoID, prID: number) { $0.statusSummary = summary }
             if var hit = prSearchResults[repoID], hit.id == number {
-                hit.checksLabel = label
-                hit.checksColor = color
+                hit.statusSummary = summary
                 assign(\.prSearchResults[repoID], hit)
             }
+        }
+    }
+
+    /// Re-fetches just one PR's check runs — the PR screen polls this while
+    /// CI is running (REST, ETag-cached: an unchanged poll is a free 304).
+    /// When the last run finishes, the row-level summary is refreshed once.
+    func refreshChecks(repoID: RepoRef, prID: Int) async {
+        guard let (_, client) = resolve(repoID),
+              let pr = detailPullRequests[repoID]?.first(where: { $0.id == prID }) else { return }
+        let path = repoID.path
+        let source = pr.source
+        let wasRunning = pr.areChecksRunning
+        guard let runs = try? await client.checks(repo: path, pullRequest: source) else { return }
+        updatePullRequest(repoID: repoID, prID: prID) { $0.checks = runs.map(DisplayMapper.check) }
+        if wasRunning, !runs.contains(where: \.isRunning) {
+            await loadCheckSummaries(repoID: repoID, numbers: [prID])
         }
     }
 

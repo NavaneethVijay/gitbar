@@ -69,6 +69,10 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         if popover.isShown {
             repoStore.refreshVisibleScreen(repoID: model.selectedRepoID, prID: model.selectedPullRequestID)
         }
+        // Open PR windows stay fresh whether or not the popover is.
+        for pr in model.prWindows.openPullRequests {
+            repoStore.beginPRDetail(repoID: pr.repo, prID: pr.number)
+        }
         await repoStore.refresh()
     }
 
@@ -127,5 +131,10 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     /// rather than after `show()`: AppKit reassigns one once the window is key.
     func popoverDidShow(_ notification: Notification) {
         popover.contentViewController?.view.window?.makeFirstResponder(nil)
+        model.isPopoverShown = true
+    }
+
+    func popoverDidClose(_ notification: Notification) {
+        model.isPopoverShown = false
     }
 }

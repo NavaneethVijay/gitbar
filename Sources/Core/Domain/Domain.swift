@@ -37,12 +37,29 @@ struct RemoteRepo: Identifiable, Sendable {
     var id: String { path }
 }
 
+/// Where a PR is in its life — lists only return open ones, but one opened
+/// from the inbox (or refreshed after merging) can be any of these.
+enum PullRequestState: Equatable, Sendable {
+    case open
+    case closed
+    case merged
+}
+
+/// The provider's overall review verdict on a PR — what github.com shows as
+/// "Approved" / "Changes requested" / "Review required" on its PR list.
+enum PullRequestReviewStatus: Equatable, Sendable {
+    case approved
+    case changesRequested
+    case reviewRequired
+}
+
 struct PullRequest: Equatable, Sendable {
     /// Per-repo number (GitHub `#12`, GitLab `!12`) — also the id the store
     /// and the UI key rows by.
     let number: Int
     let title: String
     let author: String
+    var state: PullRequestState = .open
     let isDraft: Bool
     /// Logins currently asked to review.
     let requestedReviewers: [String]
@@ -73,6 +90,10 @@ struct PullRequestFileChange: Equatable, Sendable {
     let status: FileChangeStatus
     let additions: Int
     let deletions: Int
+    /// The file's unified-diff hunks (`@@ -a,b +c,d @@` …), the format every
+    /// provider speaks. `nil` when the provider didn't send one — binary,
+    /// or too large for it to show.
+    var patch: String? = nil
 }
 
 struct Issue: Equatable, Sendable {
@@ -93,12 +114,30 @@ enum CheckSummary: Equatable, Sendable {
     case other(String)
 }
 
+/// One PR's row-level status, batched per page: combined CI plus the
+/// provider's review verdict (`nil` when it has none to report).
+struct PullRequestStatusSummary: Equatable, Sendable {
+    let checks: CheckSummary
+    let review: PullRequestReviewStatus?
+}
+
+enum CheckRunStatus: Equatable, Sendable {
+    case passed
+    case failed
+    /// Queued or in progress — not finished yet.
+    case running
+    case skipped
+    /// Finished without a pass/fail verdict (e.g. GitHub's "neutral").
+    case neutral
+}
+
 /// One individual CI job/check on a PR — the PR screen's Checks list.
 struct CheckRun: Equatable, Sendable {
     let name: String
-    let passed: Bool
-    let isRunning: Bool
+    let status: CheckRunStatus
     let detailsURL: URL?
+
+    var isRunning: Bool { status == .running }
 }
 
 enum ReviewState: Equatable, Sendable {

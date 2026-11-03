@@ -27,7 +27,7 @@ struct PRCheck: Identifiable, Equatable {
     /// compare equal, or every refresh would redraw the PR screen.
     let id: String
     let name: String
-    let passed: Bool
+    let status: CheckRunStatus
     /// The CI run page; no "Details" link when `nil`.
     let detailsURL: URL?
 }
@@ -67,6 +67,8 @@ struct PRFileChange: Identifiable, Equatable {
     let status: FileChangeStatus
     let additions: Int
     let deletions: Int
+    /// Raw unified diff — parsed only when the file is expanded (`UnifiedDiff`).
+    var patch: String? = nil
 }
 
 struct PRComment: Identifiable, Equatable {
@@ -78,19 +80,24 @@ struct PRComment: Identifiable, Equatable {
     let text: String
 }
 
-/// One open PR: row fields plus detail sections (`checks`, `comments`,
-/// `reviewers`), which start empty and load lazily.
+/// The colored status pill on a PR row and the PR screen's header.
+struct PRStatusChip: Equatable {
+    let label: String
+    let color: Color
+}
+
+/// One PR: row fields plus detail sections (`checks`, `comments`,
+/// `reviewers`, `files`), which start empty and load lazily.
 struct RepoPullRequest: Identifiable, Equatable {
     /// The per-repo number (`#12` / `!12`).
     let id: Int
     let title: String
     let author: String
     let initials: String
-    /// Combined CI status — empty until `checkSummaries` arrives.
-    var checksLabel: String
-    var checksColor: Color
-    let chipLabel: String
-    let chipColor: Color
+    /// Combined CI + review verdict — `nil` until `statusSummaries` arrives.
+    var statusSummary: PullRequestStatusSummary?
+    /// The account's own user is among the requested reviewers.
+    let isReviewRequestedFromMe: Bool
 
     let openedAgo: String
     let headBranch: String
@@ -105,6 +112,29 @@ struct RepoPullRequest: Identifiable, Equatable {
     /// The domain value behind this row, handed back to the provider for
     /// follow-up calls (checks need its head commit, reviewers its requests).
     let source: PullRequest
+
+    /// The PR on the web.
+    var webURL: URL? { source.webURL }
+
+    /// Combined CI label — empty until `statusSummaries` arrives.
+    var checksLabel: String { statusSummary.map { DisplayMapper.checksLabel(for: $0.checks).label } ?? "" }
+    var checksColor: Color { statusSummary.map { DisplayMapper.checksLabel(for: $0.checks).color } ?? Palette.neutral }
+    /// CI still going — drawn with a spinner rather than static text.
+    var areChecksRunning: Bool {
+        statusSummary?.checks == .running || checks.contains { $0.status == .running }
+    }
+
+    var status: PRStatusChip { DisplayMapper.statusChip(for: self) }
+
+    /// A re-fetched copy of this PR keeps what was already loaded for it, so
+    /// nothing flashes empty while the sections re-fetch.
+    mutating func keepLoadedDetail(from previous: RepoPullRequest) {
+        statusSummary = previous.statusSummary
+        checks = previous.checks
+        comments = previous.comments
+        reviewers = previous.reviewers
+        files = previous.files
+    }
 }
 
 struct RepoIssue: Identifiable, Equatable {

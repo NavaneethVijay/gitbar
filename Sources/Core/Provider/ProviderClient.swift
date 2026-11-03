@@ -31,9 +31,9 @@ protocol ProviderClient: Actor {
     func pullRequests(repo: String, page: Int, author: String) async throws -> Page<PullRequest>
 
     // One PR's details.
-    /// Combined CI result per PR, for a whole page at once — ideally one
-    /// request, however the provider can manage it.
-    func checkSummaries(repo: String, numbers: [Int]) async throws -> [Int: CheckSummary]
+    /// Combined CI result and review verdict per PR, for a whole page at
+    /// once — ideally one request, however the provider can manage it.
+    func statusSummaries(repo: String, numbers: [Int]) async throws -> [Int: PullRequestStatusSummary]
     func checks(repo: String, pullRequest: PullRequest) async throws -> [CheckRun]
     func comments(repo: String, number: Int) async throws -> [Comment]
     /// One state per person, already reduced from the provider's own

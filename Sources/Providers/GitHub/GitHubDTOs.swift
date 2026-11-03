@@ -50,6 +50,9 @@ struct GitHubPullRequest: Decodable {
     let id: Int  // decoded from `number` — see CodingKeys; GitHub's own `id` is an opaque internal id we don't need
     let title: String
     let user: GitHubUserRef
+    /// "open" / "closed" — a merged PR is "closed" with `mergedAt` set.
+    let state: String?
+    let mergedAt: Date?
     let draft: Bool
     let requestedReviewers: [GitHubUserRef]
     let head: Ref
@@ -67,7 +70,8 @@ struct GitHubPullRequest: Decodable {
 
     enum CodingKeys: String, CodingKey {
         case id = "number"
-        case title, user, draft, head, base, body
+        case title, user, state, draft, head, base, body
+        case mergedAt = "merged_at"
         case requestedReviewers = "requested_reviewers"
         case createdAt = "created_at"
         case htmlURL = "html_url"
@@ -112,6 +116,9 @@ struct GitHubPullRequestFile: Decodable {
     let status: String  // "added" / "removed" / "modified" / "renamed" / "copied" / "changed" / "unchanged"
     let additions: Int
     let deletions: Int
+    /// Unified-diff hunks for this file. GitHub leaves it out for binary
+    /// files and for diffs too large to show.
+    let patch: String?
 }
 
 struct GitHubCheckRunList: Decodable {

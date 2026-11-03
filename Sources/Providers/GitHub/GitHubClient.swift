@@ -131,6 +131,7 @@ actor GitHubClient: ProviderClient {
             struct Node: Decodable {
                 let number: Int?
                 let title: String?
+                let state: String?
                 let isDraft: Bool?
                 let createdAt: Date?
                 let body: String?
@@ -146,7 +147,7 @@ actor GitHubClient: ProviderClient {
         let query = """
         query($q: String!, $after: String) { search(query: $q, type: ISSUE, first: 20, after: $after) {
           pageInfo { hasNextPage endCursor }
-          nodes { ... on PullRequest { number title isDraft createdAt body headRefName baseRefName headRefOid url
+          nodes { ... on PullRequest { number title state isDraft createdAt body headRefName baseRefName headRefOid url
             author { login } reviewRequests(first: 20) { nodes { requestedReviewer { ... on User { login } } } } } } } }
         """
         let response: Response = try await graphQL(query, variables: [
@@ -161,6 +162,7 @@ actor GitHubClient: ProviderClient {
             guard let number = node.number, let title = node.title, let createdAt = node.createdAt else { return nil }
             return PullRequest(
                 number: number, title: title, author: node.author?.login ?? author,
+                state: GitHubMapping.pullRequestState(graphQL: node.state),
                 isDraft: node.isDraft ?? false,
                 requestedReviewers: node.reviewRequests?.nodes.compactMap { $0.requestedReviewer?.login } ?? [],
                 sourceBranch: node.headRefName ?? "", targetBranch: node.baseRefName ?? "",
@@ -172,10 +174,10 @@ actor GitHubClient: ProviderClient {
 
     // MARK: - PR details
 
-    /// `statusCheckRollup` on each PR's head commit — the same summary
-    /// github.com's PR list shows, covering check runs and legacy commit
-    /// statuses. One aliased GraphQL query for the whole page.
-    func checkSummaries(repo: String, numbers: [Int]) async throws -> [Int: CheckSummary] {
+    /// `statusCheckRollup` on each PR's head commit plus its `reviewDecision`
+    /// — the same summary github.com's PR list shows, covering check runs and
+    /// legacy commit statuses. One aliased GraphQL query for the whole page.
+    func statusSummaries(repo: String, numbers: [Int]) async throws -> [Int: PullRequestStatusSummary] {
         guard !numbers.isEmpty, let (owner, name) = Self.split(repo) else { return [:] }
         struct Response: Decodable {
             struct DataField: Decodable { let repository: [String: PullRequestNode?]? }
@@ -185,19 +187,22 @@ actor GitHubClient: ProviderClient {
                 struct Commit: Decodable { let statusCheckRollup: Rollup? }
                 struct Rollup: Decodable { let state: String }
                 let number: Int
+                let reviewDecision: String?
                 let commits: Commits
             }
             let data: DataField?
         }
         let fields = numbers.map {
-            "p\($0): pullRequest(number: \($0)) { number commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } }"
+            "p\($0): pullRequest(number: \($0)) { number reviewDecision commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } }"
         }
         let query = "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { \(fields.joined(separator: " ")) } }"
         let response: Response = try await graphQL(query, variables: ["owner": owner, "name": name])
 
-        var result: [Int: CheckSummary] = [:]
+        var result: [Int: PullRequestStatusSummary] = [:]
         for case let node? in (response.data?.repository ?? [:]).values {
-            result[node.number] = GitHubMapping.checkSummary(rollupState: node.commits.nodes.first?.commit.statusCheckRollup?.state)
+            result[node.number] = PullRequestStatusSummary(
+                checks: GitHubMapping.checkSummary(rollupState: node.commits.nodes.first?.commit.statusCheckRollup?.state),
+                review: GitHubMapping.reviewStatus(node.reviewDecision))
         }
         return result
     }
