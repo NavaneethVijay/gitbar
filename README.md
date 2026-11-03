@@ -21,7 +21,10 @@ GitHub (github.com and GitHub Enterprise Server) is supported today; the app is 
 
 - **Pinned repos** with a status ring: all clear, CI running, or review requested.
 - **Pull requests and issues** per repo, paginated, with real CI status per PR — and an **Only mine** filter.
-- **PR detail**: description (rendered like GitHub), reviewers, checks, comments — and submit a review (Approve / Request changes / Comment).
+- **Accurate PR status**: Merged, Closed, Draft, Review requested, Changes requested, Approved or Review required — not just "Open".
+- **Live CI**: running checks show a spinner and update on their own until they finish.
+- **PR detail**: description (rendered like GitHub), reviewers, checks, files changed, comments, a link to the PR — and submit a review (Approve / Request changes / Comment).
+- **PR window**: pop any PR out of the menu into its own resizable window, with **inline file diffs** (large and generated files stay collapsed until you ask).
 - **Create pull requests**: pick source and target branch, title, and description — prefilled from the repo's PR template.
 - **Notifications**: an inbox of review requests, mentions, assignments and more, an unread dot on the menu bar icon, per-repo unread counts, and macOS alerts for new ones (you choose which reasons). Needs a classic token with the `notifications` or `repo` scope.
 - **Token check**: when you add an account, gitbar tells you what the token can do (read repos, review/open PRs, notifications) and how to fix what's missing.
@@ -31,30 +34,65 @@ GitHub (github.com and GitHub Enterprise Server) is supported today; the app is 
 
 ## Install
 
-gitbar is installed by building it from source. There are no prebuilt downloads yet — see [Roadmap](#roadmap) for why.
+gitbar is installed by **building it from source on your own Mac**. There are no prebuilt downloads yet: without an Apple Developer ID signature, macOS blocks any downloaded copy (see [Roadmap](#roadmap)). A copy you build yourself is never blocked — no security prompt, no "Open Anyway".
 
-**Requirements:** macOS 15 or later, [Xcode](https://apps.apple.com/app/xcode/id497799835), and [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`).
+It takes about 5 minutes plus the Xcode download.
+
+### 1. Install the tools (once per Mac)
+
+You need **macOS 15 (Sequoia) or later**.
+
+1. **Xcode** — install it from the [App Store](https://apps.apple.com/app/xcode/id497799835), then **open it once** and let it finish installing its components. The full Xcode app is required; the smaller *Command Line Tools* alone can't build a Mac app.
+2. Point the command line at it and accept its license (asks for your Mac password):
+   ```sh
+   sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+   sudo xcodebuild -license accept
+   ```
+3. **Homebrew** — skip if `brew --version` already works; otherwise follow [brew.sh](https://brew.sh).
+4. **XcodeGen** (generates the Xcode project):
+   ```sh
+   brew install xcodegen
+   ```
+
+### 2. Build and install gitbar
 
 ```sh
 git clone https://github.com/NavaneethVijay/gitbar.git
 cd gitbar
-make install        # builds, installs to /Applications/gitbar.app, and opens it
+make install
 ```
 
-Because the app is built on your own Mac rather than downloaded, macOS opens it without any security prompt.
+`make install` builds a Release copy, installs it to `/Applications/gitbar.app` and opens it. The first build also downloads two Swift packages (Sparkle and swift-markdown), so it needs internet and takes a few minutes; later builds are faster. When it's done, gitbar's icon appears in the **menu bar** (top right of the screen).
 
-gitbar lives in the menu bar — it has no window or Dock icon. To get started:
+### 3. Connect your GitHub account
 
-1. Click its menu bar icon → gear → **Manage this app…**
-2. **Accounts → GitHub → Add Account**, choose **Cloud** (github.com) or **Self-hosted** (GitHub Enterprise Server).
-3. Paste a [personal access token](https://github.com/settings/tokens). A **classic** token with the `repo` scope covers everything, including notifications; gitbar shows what your token can and can't do right after you add it.
-4. Pick the repos to show.
+1. Click gitbar's menu bar icon → gear icon → **Manage this app…**
+2. **Accounts → GitHub → Add Account**, choose **Cloud** (github.com) or **Self-hosted** (GitHub Enterprise Server — enter your server's address).
+3. Create a [personal access token](https://github.com/settings/tokens) and paste it in. A **classic** token with the `repo` scope covers everything, including notifications. gitbar shows what your token can and can't do right after you add it.
+4. Pick the repos to show — they appear in the menu bar popover.
+
+gitbar normally lives only in the menu bar. While its Settings window or a PR window is open it also shows in the Dock and ⌘-Tab, so you can bring those windows back from behind other apps.
+
+### Update, remove, and other options
 
 | | |
 |---|---|
-| Update | `git pull && make install` |
+| Update to the latest version | `cd gitbar && git pull && make install` |
 | Remove | `make uninstall` |
-| Install without admin rights | `make install INSTALL_DIR=~/Applications` |
+| Install without admin rights (to `~/Applications`) | `make install INSTALL_DIR=~/Applications` |
+
+Updating keeps your accounts, tokens (stored in the Keychain) and pinned repos.
+
+### Troubleshooting
+
+| Problem | Fix |
+|---|---|
+| `error: XcodeGen isn't installed` / `xcodegen: command not found` | `brew install xcodegen` |
+| `error: the full Xcode app is needed` / `xcodebuild requires Xcode` | Install Xcode, open it once, then run the two `sudo` commands from step 1. |
+| `You have not agreed to the Xcode license` | `sudo xcodebuild -license accept` |
+| `can't write to /Applications` | `make install INSTALL_DIR=~/Applications` |
+| Build fails while resolving packages | Check your internet connection and run `make install` again. |
+| Installed, but no icon in the menu bar | The menu bar may be full — quit an app or two, or check System Settings → Menu Bar for hidden items. |
 
 ## Development
 
