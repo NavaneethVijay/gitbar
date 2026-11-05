@@ -8,8 +8,9 @@ struct SettingsView: View {
     @ObservedObject var favoriteStore: FavoriteRepoStore
     let updater: AppUpdater
     let notificationStore: NotificationStore
+    @ObservedObject var navigator: SettingsNavigator
 
-    private enum Selection: Hashable {
+    enum Selection: Hashable {
         case general
         case notifications
         case account(UUID)
@@ -31,6 +32,12 @@ struct SettingsView: View {
         }
         .onAppear {
             if selection == nil { selection = defaultSelection }
+        }
+        // Another window asked for a page ("Account Settings…").
+        .onReceive(navigator.$request.compactMap { $0 }) { request in
+            selection = request
+            if case .addAccount(let provider) = request { expandedProviders.insert(provider) }
+            navigator.request = nil
         }
         .onChange(of: accountStore.accounts.map(\.id)) { _, ids in
             // The selected account was just disconnected.

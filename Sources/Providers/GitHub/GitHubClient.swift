@@ -111,6 +111,51 @@ actor GitHubClient: ProviderClient {
         return pr.domain
     }
 
+    func issues(repo: String, page: Int, assignee: String) async throws -> Page<Issue> {
+        let login = assignee.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? assignee
+        let result: (value: [GitHubIssue], hasNextPage: Bool) =
+            try await get("/repos/\(repo)/issues?state=open&assignee=\(login)&per_page=20&page=\(page)")
+        return Page(items: result.value.filter { $0.pullRequest == nil }.map(\.domain), hasNextPage: result.hasNextPage)
+    }
+
+    /// `/issues/{n}` answers for PRs too — a PR number is "not an issue".
+    func issue(repo: String, number: Int) async throws -> Issue {
+        let issue: GitHubIssue = try await get("/repos/\(repo)/issues/\(number)").value
+        guard issue.pullRequest == nil else { throw ProviderError.unexpectedStatus(.github, 404) }
+        return issue.domain
+    }
+
+    /// Four plain GETs, all ETag-cacheable (an unchanged repo costs nothing
+    /// on later polls). Only the repo itself is required; a repo with no
+    /// releases (404) or no CI just leaves those parts out.
+    func overview(repo: String) async throws -> RepoOverview {
+        let info: GitHubRepoInfo = try await get("/repos/\(repo)").value
+        let branch = info.defaultBranch.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? info.defaultBranch
+        async let releaseTask: (value: GitHubRelease, hasNextPage: Bool)? = try? get("/repos/\(repo)/releases/latest")
+        async let runsTask: (value: GitHubCheckRunList, hasNextPage: Bool)? =
+            try? get("/repos/\(repo)/commits/\(branch)/check-runs?per_page=100")
+        async let statusTask: (value: GitHubCombinedStatus, hasNextPage: Bool)? =
+            try? get("/repos/\(repo)/commits/\(branch)/status")
+        let (release, runs, status) = await (releaseTask, runsTask, statusTask)
+        return RepoOverview(
+            description: info.description,
+            stars: info.stargazersCount,
+            defaultBranch: info.defaultBranch,
+            defaultBranchChecks: GitHubMapping.branchChecks(
+                runs: runs?.value.checkRuns.map(\.domain.status), combined: status?.value),
+            latestRelease: release.map { RepoOverview.Release(tag: $0.value.tagName, publishedAt: $0.value.publishedAt) },
+            webURL: info.htmlURL)
+    }
+
+    /// Same endpoint as a PR's conversation — on GitHub a PR is an issue.
+    func issueComments(repo: String, number: Int) async throws -> [Comment] {
+        try await comments(repo: repo, number: number)
+    }
+
+    func addIssueComment(repo: String, number: Int, body: String) async throws -> Comment {
+        try await addComment(repo: repo, number: number, body: body)
+    }
+
     /// GitHub's REST PR list can't filter by author, so this is a GraphQL
     /// search — one request that returns everything a PR row and screen need.
     func pullRequests(repo: String, page: Int, author: String) async throws -> Page<PullRequest> {
@@ -127,6 +172,10 @@ actor GitHubClient: ProviderClient {
                 struct Request: Decodable { let requestedReviewer: Login? }
                 let nodes: [Request]
             }
+            struct Labels: Decodable {
+                struct LabelNode: Decodable { let name: String; let color: String? }
+                let nodes: [LabelNode]
+            }
             /// Search can match non-PR nodes; those decode with every field nil.
             struct Node: Decodable {
                 let number: Int?
@@ -140,6 +189,7 @@ actor GitHubClient: ProviderClient {
                 let headRefOid: String?
                 let author: Login?
                 let reviewRequests: ReviewRequests?
+                let labels: Labels?
                 let url: URL?
             }
             let data: DataField?
@@ -148,7 +198,8 @@ actor GitHubClient: ProviderClient {
         query($q: String!, $after: String) { search(query: $q, type: ISSUE, first: 20, after: $after) {
           pageInfo { hasNextPage endCursor }
           nodes { ... on PullRequest { number title state isDraft createdAt body headRefName baseRefName headRefOid url
-            author { login } reviewRequests(first: 20) { nodes { requestedReviewer { ... on User { login } } } } } } } }
+            author { login } reviewRequests(first: 20) { nodes { requestedReviewer { ... on User { login } } } }
+            labels(first: 20) { nodes { name color } } } } } }
         """
         let response: Response = try await graphQL(query, variables: [
             "q": "repo:\(repo) is:pr is:open author:\(author) sort:created-desc",
@@ -167,7 +218,8 @@ actor GitHubClient: ProviderClient {
                 requestedReviewers: node.reviewRequests?.nodes.compactMap { $0.requestedReviewer?.login } ?? [],
                 sourceBranch: node.headRefName ?? "", targetBranch: node.baseRefName ?? "",
                 headSHA: node.headRefOid ?? "", body: node.body ?? "",
-                createdAt: createdAt, webURL: node.url, diffURL: node.url?.appendingPathComponent("files"))
+                createdAt: createdAt, webURL: node.url, diffURL: node.url?.appendingPathComponent("files"),
+                labels: node.labels?.nodes.map { ItemLabel(name: $0.name, colorHex: $0.color) } ?? [])
         }
         return Page(items: items, hasNextPage: search.pageInfo.hasNextPage)
     }

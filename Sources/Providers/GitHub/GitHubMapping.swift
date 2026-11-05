@@ -12,9 +12,14 @@ extension GitHubPullRequest {
             requestedReviewers: requestedReviewers.map(\.login),
             sourceBranch: head.ref, targetBranch: base.ref, headSHA: head.sha ?? "",
             body: body ?? "", createdAt: createdAt, webURL: htmlURL,
-            diffURL: htmlURL?.appendingPathComponent("files")
+            diffURL: htmlURL?.appendingPathComponent("files"),
+            labels: (labels ?? []).map(\.domain)
         )
     }
+}
+
+extension GitHubLabel {
+    var domain: ItemLabel { ItemLabel(name: name, colorHex: color) }
 }
 
 extension GitHubPullRequestFile {
@@ -26,7 +31,9 @@ extension GitHubPullRequestFile {
 
 extension GitHubIssue {
     var domain: Issue {
-        Issue(number: id, title: title, author: user.login, createdAt: createdAt)
+        Issue(number: id, title: title, author: user.login, createdAt: createdAt,
+              labels: (labels ?? []).map(\.domain), assignees: (assignees ?? []).map(\.login),
+              commentCount: comments ?? 0, webURL: htmlURL, body: body ?? "")
     }
 }
 
@@ -210,6 +217,21 @@ enum GitHubMapping {
         case nil: return .none
         case let other?: return .other(other.lowercased())
         }
+    }
+
+    /// The default branch's CI from both of GitHub's systems: check runs
+    /// and legacy commit statuses (`nil` = that call failed).
+    static func branchChecks(runs: [CheckRunStatus]?, combined: GitHubCombinedStatus?) -> CheckSummary? {
+        guard runs != nil || combined != nil else { return nil }
+        var statuses = runs ?? []
+        if let combined, combined.totalCount > 0 {
+            switch combined.state {
+            case "success": statuses.append(.passed)
+            case "pending": statuses.append(.running)
+            default: statuses.append(.failed)
+            }
+        }
+        return .combining(statuses)
     }
 
     static func reviewEvent(_ decision: ReviewDecision) -> String {

@@ -27,9 +27,43 @@ struct GitHubRepo: Decodable {
 
 struct GitHubRepoInfo: Decodable {
     let defaultBranch: String
+    let description: String?
+    let stargazersCount: Int?
+    let htmlURL: URL?
 
     enum CodingKeys: String, CodingKey {
+        case description
+        case htmlURL = "html_url"
         case defaultBranch = "default_branch"
+        case stargazersCount = "stargazers_count"
+    }
+}
+
+struct GitHubLabel: Decodable {
+    let name: String
+    /// Hex without `#`, e.g. "d73a4a".
+    let color: String?
+}
+
+struct GitHubRelease: Decodable {
+    let tagName: String
+    let publishedAt: Date?
+
+    enum CodingKeys: String, CodingKey {
+        case tagName = "tag_name"
+        case publishedAt = "published_at"
+    }
+}
+
+/// Legacy commit statuses, combined — `/commits/{ref}/status`.
+struct GitHubCombinedStatus: Decodable {
+    /// "success" / "failure" / "error" / "pending" (also when there are none).
+    let state: String
+    let totalCount: Int
+
+    enum CodingKeys: String, CodingKey {
+        case state
+        case totalCount = "total_count"
     }
 }
 
@@ -60,6 +94,7 @@ struct GitHubPullRequest: Decodable {
     let body: String?
     let createdAt: Date
     let htmlURL: URL?
+    let labels: [GitHubLabel]?
 
     struct Ref: Decodable {
         let ref: String
@@ -70,7 +105,7 @@ struct GitHubPullRequest: Decodable {
 
     enum CodingKeys: String, CodingKey {
         case id = "number"
-        case title, user, state, draft, head, base, body
+        case title, user, state, draft, head, base, body, labels
         case mergedAt = "merged_at"
         case requestedReviewers = "requested_reviewers"
         case createdAt = "created_at"
@@ -83,6 +118,11 @@ struct GitHubIssue: Decodable {
     let title: String
     let user: GitHubUserRef
     let createdAt: Date
+    let labels: [GitHubLabel]?
+    let assignees: [GitHubUserRef]?
+    let comments: Int?
+    let htmlURL: URL?
+    let body: String?
     /// Present (non-nil) only when the issues endpoint is actually returning
     /// a PR — GitHub's `/issues` list includes PRs too. `fetchOpenIssues`
     /// filters these out before returning.
@@ -92,8 +132,9 @@ struct GitHubIssue: Decodable {
 
     enum CodingKeys: String, CodingKey {
         case id = "number"
-        case title, user
+        case title, user, labels, assignees, comments, body
         case createdAt = "created_at"
+        case htmlURL = "html_url"
         case pullRequest = "pull_request"
     }
 }

@@ -38,6 +38,23 @@ final class LiveRepoStore {
     private(set) var isLoadingMoreMinePullRequests: [RepoRef: Bool] = [:]
 
     // PR-number search: only PRs fetched by number because they weren't loaded.
+    /// The Issues tab's "Assigned to me" list, fetched server-side.
+    private(set) var assignedIssues: [RepoRef: [RepoIssue]] = [:]
+    private(set) var hasMoreAssignedIssues: [RepoRef: Bool] = [:]
+    private(set) var isLoadingMoreAssignedIssues: [RepoRef: Bool] = [:]
+    /// An issue fetched by number because it wasn't in the loaded pages.
+    private(set) var issueSearchResults: [RepoRef: RepoIssue] = [:]
+    private(set) var isSearchingIssue: [RepoRef: Bool] = [:]
+    private(set) var issueSearchError: [RepoRef: String] = [:]
+    /// Issue screens (repo window). Keyed by repo + issue number — separate
+    /// from the PR dictionaries, since GitLab's `#5` and `!5` can coexist.
+    private(set) var issueComments: [PRRef: [PRComment]] = [:]
+    private(set) var loadingIssueCommentsFor: Set<PRRef> = []
+    private(set) var isPostingIssueComment: [PRRef: Bool] = [:]
+    private(set) var issueCommentError: [PRRef: String] = [:]
+    /// The repo screen's summary strip (description, default-branch CI,
+    /// latest release, stars).
+    private(set) var repoSummaries: [RepoRef: RepoSummary] = [:]
     private(set) var prSearchResults: [RepoRef: RepoPullRequest] = [:]
     private(set) var isSearchingPR: [RepoRef: Bool] = [:]
     private(set) var prSearchError: [RepoRef: String] = [:]
@@ -57,6 +74,10 @@ final class LiveRepoStore {
     @ObservationIgnored private var issuePageCursor: [RepoRef: Int] = [:]
     @ObservationIgnored private var minePageCursor: [RepoRef: Int] = [:]
     @ObservationIgnored private var lastMineRefreshAt: [RepoRef: Date] = [:]
+    @ObservationIgnored private var assignedPageCursor: [RepoRef: Int] = [:]
+    @ObservationIgnored private var lastAssignedRefreshAt: [RepoRef: Date] = [:]
+    @ObservationIgnored private var isLoadingOverview: Set<RepoRef> = []
+    @ObservationIgnored private var lastIssueDetailRefreshAt: [PRRef: Date] = [:]
 
     // `refresh()` joins an in-flight run and skips within
     // `minimumRefreshInterval` of the last; detail screens use the same
@@ -101,6 +122,13 @@ final class LiveRepoStore {
     struct AccountBadge: Equatable {
         let color: AccountColor
         let label: String
+        /// "login · GitHub" (plus the host when self-hosted) — the main
+        /// window's account group header.
+        let title: String
+        /// Order in Settings — account groups follow it.
+        let position: Int
+        /// The host's home page, for "Open on GitHub".
+        let webURL: URL?
     }
 
     /// Per account id — the repo list tints each repo's tile by its account.
@@ -110,7 +138,10 @@ final class LiveRepoStore {
         Dictionary(uniqueKeysWithValues: accounts.enumerated().map { position, account in
             (account.id, AccountBadge(
                 color: account.resolvedColor(position: position),
-                label: "\(account.provider.displayName) · @\(account.login)" + (account.isCloud ? "" : " (\(account.host))")))
+                label: "\(account.provider.displayName) · @\(account.login)" + (account.isCloud ? "" : " (\(account.host))"),
+                title: "\(account.login) · " + (account.isCloud ? account.provider.displayName : account.host),
+                position: position,
+                webURL: URL(string: "https://\(account.host)")))
         })
     }
 
@@ -295,11 +326,30 @@ final class LiveRepoStore {
             if detailIssues[repoID] == nil {
                 Task { await loadMoreIssues(repoID: repoID) }
             }
+            Task { await loadOverview(repoID: repoID) }
         } else if isStale(lastRepoDetailRefreshAt[repoID]) {
             Task { await refreshRepoDetailFirstPage(repoID: repoID) }
+        } else if repoSummaries[repoID] == nil {
+            Task { await loadOverview(repoID: repoID) }
         }
-        // Keep "Only mine" fresh too, once it's been used for this repo.
+        // Keep "Only mine" / "Assigned to me" fresh too, once used for this repo.
         if minePullRequests[repoID] != nil { beginMinePullRequests(repoID: repoID) }
+        if assignedIssues[repoID] != nil { beginAssignedIssues(repoID: repoID) }
+    }
+
+    /// A Refresh button: re-fetches now (no 60s throttle) and returns once
+    /// it's done, so the caller can confirm it.
+    func refreshRepoDetail(repoID: RepoRef) async {
+        lastRepoDetailRefreshAt[repoID] = Date()
+        if detailPullRequests[repoID] != nil, detailIssues[repoID] != nil {
+            await refreshRepoDetailFirstPage(repoID: repoID)
+        } else {
+            if detailPullRequests[repoID] == nil { await loadMorePullRequests(repoID: repoID) }
+            if detailIssues[repoID] == nil { await loadMoreIssues(repoID: repoID) }
+            await loadOverview(repoID: repoID)
+        }
+        if minePullRequests[repoID] != nil { await loadMoreMinePullRequests(repoID: repoID, restart: true) }
+        if assignedIssues[repoID] != nil { await loadMoreAssignedIssues(repoID: repoID, restart: true) }
     }
 
     /// A PR's screen appearing — first visit lazily loads its sections;
@@ -343,6 +393,7 @@ final class LiveRepoStore {
         lastRepoDetailRefreshAt[repoID] = Date()
 
         let path = repoID.path
+        Task { await loadOverview(repoID: repoID) }
         async let prPage = try? withRateLimitBackoff { try await client.pullRequests(repo: path, page: 1) }
         async let issuePage = try? withRateLimitBackoff { try await client.issues(repo: path, page: 1) }
         let (prs, issues) = await (prPage, issuePage)
@@ -362,7 +413,7 @@ final class LiveRepoStore {
         }
         if let issues {
             let old = detailIssues[repoID] ?? []
-            let fresh = issues.items.map(DisplayMapper.issue)
+            let fresh = issues.items.map { DisplayMapper.issue($0, login: account.login) }
             assign(\.detailIssues[repoID], Self.mergeFirstPage(fresh, into: old, oldFirstPageCount: fresh.count))
             if (issuePageCursor[repoID] ?? 0) <= 1 { assign(\.hasMoreIssues[repoID], issues.hasNextPage) }
             issuePageCursor[repoID] = max(issuePageCursor[repoID] ?? 0, 1)
@@ -467,11 +518,150 @@ final class LiveRepoStore {
         do {
             let page = try await withRateLimitBackoff { try await client.issues(repo: repoID.path, page: nextPage) }
             let existingIDs = Set((detailIssues[repoID] ?? []).map(\.id))
-            detailIssues[repoID, default: []].append(contentsOf: page.items.map(DisplayMapper.issue).filter { !existingIDs.contains($0.id) })
+            let login = account.login
+            detailIssues[repoID, default: []].append(contentsOf: page.items.map { DisplayMapper.issue($0, login: login) }.filter { !existingIDs.contains($0.id) })
             hasMoreIssues[repoID] = page.hasNextPage
             issuePageCursor[repoID] = nextPage
         } catch {
             assign(\.loadError, Self.message(for: error, fallback: "Couldn't load more issues."))
+        }
+    }
+
+    /// The summary strip. Best-effort: a failure just leaves the strip as it
+    /// was (empty on first load) — the lists below matter more.
+    private func loadOverview(repoID: RepoRef) async {
+        guard !isLoadingOverview.contains(repoID), let (account, client) = resolve(repoID) else { return }
+        if await rateLimitGuard(client, account: account) != nil { return }
+        isLoadingOverview.insert(repoID)
+        defer { isLoadingOverview.remove(repoID) }
+        let path = repoID.path
+        guard let overview = try? await withRateLimitBackoff({ try await client.overview(repo: path) }) else { return }
+        assign(\.repoSummaries[repoID], DisplayMapper.summary(overview))
+    }
+
+    /// The "Assigned to me" list appearing — same lifecycle as "Only mine".
+    func beginAssignedIssues(repoID: RepoRef) {
+        if assignedIssues[repoID] == nil {
+            lastAssignedRefreshAt[repoID] = Date()
+            Task { await loadMoreAssignedIssues(repoID: repoID) }
+        } else if isStale(lastAssignedRefreshAt[repoID]) {
+            lastAssignedRefreshAt[repoID] = Date()
+            Task { await loadMoreAssignedIssues(repoID: repoID, restart: true) }
+        }
+    }
+
+    func loadMoreAssignedIssues(repoID: RepoRef, restart: Bool = false) async {
+        guard isLoadingMoreAssignedIssues[repoID] != true,
+              restart || hasMoreAssignedIssues[repoID] != false,
+              let (account, client) = resolve(repoID) else { return }
+        if let warning = await rateLimitGuard(client, account: account) {
+            assign(\.rateLimitWarning, warning)
+            return
+        }
+        isLoadingMoreAssignedIssues[repoID] = true
+        defer { isLoadingMoreAssignedIssues[repoID] = false }
+
+        let nextPage = restart ? 1 : (assignedPageCursor[repoID] ?? 0) + 1
+        let path = repoID.path
+        let login = account.login
+        do {
+            let page = try await withRateLimitBackoff { try await client.issues(repo: path, page: nextPage, assignee: login) }
+            let old = restart ? [] : (assignedIssues[repoID] ?? [])
+            let existingIDs = Set(old.map(\.id))
+            let fresh = page.items.map { DisplayMapper.issue($0, login: login) }.filter { !existingIDs.contains($0.id) }
+            assign(\.assignedIssues[repoID], old + fresh)
+            assign(\.hasMoreAssignedIssues[repoID], page.hasNextPage)
+            assignedPageCursor[repoID] = nextPage
+        } catch {
+            assign(\.loadError, Self.message(for: error, fallback: "Couldn't load your issues."))
+        }
+    }
+
+    /// Only called when the number isn't in the loaded issue pages.
+    func searchIssue(repoID: RepoRef, number: Int) async {
+        guard isSearchingIssue[repoID] != true, let (account, client) = resolve(repoID) else { return }
+        if let warning = await rateLimitGuard(client, account: account) {
+            assign(\.rateLimitWarning, warning)
+            return
+        }
+        isSearchingIssue[repoID] = true
+        issueSearchError[repoID] = nil
+        defer { isSearchingIssue[repoID] = false }
+
+        let path = repoID.path
+        do {
+            let issue = try await withRateLimitBackoff { try await client.issue(repo: path, number: number) }
+            issueSearchResults[repoID] = DisplayMapper.issue(issue, login: account.login)
+        } catch ProviderError.unexpectedStatus(_, 404) {
+            issueSearchResults[repoID] = nil
+            issueSearchError[repoID] = "No issue #\(number) found."
+        } catch {
+            issueSearchResults[repoID] = nil
+            issueSearchError[repoID] = Self.message(for: error, fallback: "Couldn't find issue #\(number).")
+        }
+    }
+
+    func clearIssueSearch(repoID: RepoRef) {
+        assign(\.issueSearchResults[repoID], nil)
+        assign(\.issueSearchError[repoID], nil)
+    }
+
+    // MARK: - Issue detail (repo window)
+
+    /// An issue from whichever list holds it — main, "Assigned to me", or a
+    /// number search.
+    func issue(repoID: RepoRef, number: Int) -> RepoIssue? {
+        detailIssues[repoID]?.first { $0.id == number }
+            ?? assignedIssues[repoID]?.first { $0.id == number }
+            ?? issueSearchResults[repoID].flatMap { $0.id == number ? $0 : nil }
+    }
+
+    /// First visit loads the comments; coming back once stale re-reads them.
+    func beginIssueDetail(repoID: RepoRef, number: Int, force: Bool = false) {
+        let key = PRRef(repo: repoID, number: number)
+        guard force || issueComments[key] == nil || isStale(lastIssueDetailRefreshAt[key]),
+              !loadingIssueCommentsFor.contains(key), let (_, client) = resolve(repoID) else { return }
+        lastIssueDetailRefreshAt[key] = Date()
+        loadingIssueCommentsFor.insert(key)
+        let path = repoID.path
+        Task {
+            defer { loadingIssueCommentsFor.remove(key) }
+            guard let comments = try? await withRateLimitBackoff({
+                try await client.issueComments(repo: path, number: number)
+            }) else { return }
+            assign(\.issueComments[key], comments.map(DisplayMapper.comment))
+        }
+    }
+
+    /// The issue screen's Refresh: re-reads the comments now and returns when done.
+    func refreshIssueDetail(repoID: RepoRef, number: Int) async {
+        let key = PRRef(repo: repoID, number: number)
+        guard let (_, client) = resolve(repoID) else { return }
+        lastIssueDetailRefreshAt[key] = Date()
+        loadingIssueCommentsFor.insert(key)
+        defer { loadingIssueCommentsFor.remove(key) }
+        let path = repoID.path
+        guard let comments = try? await withRateLimitBackoff({
+            try await client.issueComments(repo: path, number: number)
+        }) else { return }
+        assign(\.issueComments[key], comments.map(DisplayMapper.comment))
+    }
+
+    func addIssueComment(repoID: RepoRef, number: Int, body: String) async {
+        let key = PRRef(repo: repoID, number: number)
+        let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, isPostingIssueComment[key] != true, let (_, client) = resolve(repoID) else { return }
+        isPostingIssueComment[key] = true
+        issueCommentError[key] = nil
+        defer { isPostingIssueComment[key] = false }
+        let path = repoID.path
+        do {
+            let comment = try await withRateLimitBackoff {
+                try await client.addIssueComment(repo: path, number: number, body: trimmed)
+            }
+            issueComments[key, default: []].append(DisplayMapper.comment(comment))
+        } catch {
+            issueCommentError[key] = Self.message(for: error, fallback: "Couldn't post comment.")
         }
     }
 

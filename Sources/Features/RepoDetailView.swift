@@ -10,6 +10,9 @@ enum RepoDetailMetrics {
     /// screen flicker. The list scrolls inside instead.
     static let height: CGFloat = 556
     static let headerHeight: CGFloat = 52
+    /// Description line + chips. Reserved even while loading, so nothing
+    /// below jumps when it arrives.
+    static let summaryHeight: CGFloat = 56
     static let tabsHeight: CGFloat = 38
     static let rowHeight: CGFloat = 76
     static let rowSpacing: CGFloat = 8
@@ -49,13 +52,53 @@ struct RepoDetailView: View {
     var onLoadMoreMine: () -> Void = {}
     var onSelectPR: (RepoPullRequest) -> Void = { _ in }
     var onCreatePR: () -> Void = {}
+    /// The strip under the header — `nil` until `overview` arrives.
+    var summary: RepoSummary?
+    /// "Assigned to me", fetched server-side (`nil` until the first page arrives).
+    var assignedIssues: [RepoIssue]?
+    var hasMoreAssignedIssues = false
+    var isLoadingMoreAssignedIssues = false
+    var onShowAssigned: () -> Void = {}
+    var onLoadMoreAssigned: () -> Void = {}
+    /// An issue fetched by number because it wasn't in the loaded pages.
+    var issueSearchResult: RepoIssue?
+    var isSearchingIssue = false
+    var issueSearchError: String?
+    var onSearchIssue: (Int) -> Void = { _ in }
+    var onClearIssueSearch: () -> Void = {}
+    /// Opens this repo's window.
+    var onOpenInWindow: () -> Void = {}
+    /// Opens the issue in the repo window (issues have no popover screen).
+    var onSelectIssue: (RepoIssue) -> Void = { _ in }
 
     @State private var selectedTab: DetailTab = .pullRequests
     @State private var searchText = ""
+    @State private var issueSearchText = ""
     /// Remembered across repos and launches.
     @AppStorage("gitbar.prList.onlyMine") private var onlyMine = false
+    @AppStorage("gitbar.issueList.assignedToMe") private var assignedToMe = false
 
     private var isFilteringMine: Bool { onlyMine && currentLogin != nil }
+    private var isFilteringAssigned: Bool { assignedToMe && currentLogin != nil }
+
+    /// Your review is being asked for — the summary strip's "needs you" chip.
+    private var reviewRequestedCount: Int { displayedPRs.filter(\.isReviewRequestedFromMe).count }
+
+    private var issueSearchNumber: Int? {
+        let trimmed = issueSearchText.trimmingCharacters(in: .whitespaces)
+        return trimmed.isEmpty ? nil : Int(trimmed)
+    }
+
+    /// Same rules as `filteredPRs`: a number finds that issue anywhere.
+    private var filteredIssues: [RepoIssue] {
+        guard let number = issueSearchNumber else {
+            return isFilteringAssigned ? (assignedIssues ?? []) : displayedIssues
+        }
+        if let local = displayedIssues.first(where: { $0.id == number }) { return [local] }
+        if let local = assignedIssues?.first(where: { $0.id == number }) { return [local] }
+        if let remote = issueSearchResult, remote.id == number { return [remote] }
+        return []
+    }
 
     private var displayedPRs: [RepoPullRequest] { pullRequests ?? repo.pullRequests }
     private var displayedIssues: [RepoIssue] { issues ?? repo.issues }
@@ -79,9 +122,12 @@ struct RepoDetailView: View {
     var body: some View {
         VStack(spacing: 0) {
             header
+            RepoSummaryStrip(summary: summary, reviewRequestedCount: reviewRequestedCount)
             tabs
             if selectedTab == .pullRequests {
                 searchField
+            } else {
+                issueSearchField
             }
 
             ScrollView {
@@ -133,19 +179,7 @@ struct RepoDetailView: View {
                             }
                         }
                     case .issues:
-                        if displayedIssues.isEmpty && !isLoadingMoreIssues {
-                            Text("No open issues.")
-                                .font(.system(size: 11.5))
-                                .foregroundStyle(Palette.textTertiary)
-                                .padding(.vertical, 20)
-                        } else {
-                            ForEach(displayedIssues) { issue in
-                                IssueRow(issue: issue)
-                            }
-                            if hasMoreIssues {
-                                LoadMoreRow(isLoading: isLoadingMoreIssues, action: onLoadMoreIssues)
-                            }
-                        }
+                        issueList
                     }
                 }
                 .padding(.vertical, RepoDetailMetrics.verticalPadding)
@@ -158,6 +192,20 @@ struct RepoDetailView: View {
         // provider for just your PRs.
         .task(id: isFilteringMine) {
             if isFilteringMine { onShowMine() }
+        }
+        .task(id: isFilteringAssigned) {
+            if isFilteringAssigned { onShowAssigned() }
+        }
+        .task(id: issueSearchText) {
+            guard let number = issueSearchNumber else {
+                onClearIssueSearch()
+                return
+            }
+            guard !displayedIssues.contains(where: { $0.id == number }),
+                  assignedIssues?.contains(where: { $0.id == number }) != true else { return }
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            guard !Task.isCancelled else { return }
+            onSearchIssue(number)
         }
         // `.task(id:)` cancels the previous run on each keystroke — a debounce.
         .task(id: searchText) {
@@ -172,9 +220,70 @@ struct RepoDetailView: View {
         }
     }
 
+    @ViewBuilder
+    private var issueList: some View {
+        if let number = issueSearchNumber, filteredIssues.isEmpty {
+            if isSearchingIssue {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small).scaleEffect(0.7)
+                    Text("Searching issue #\(number)…")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(Palette.textTertiary)
+                }
+                .padding(.vertical, 20)
+            } else {
+                Text(issueSearchError ?? "No issue #\(number) found.")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Palette.textTertiary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 20)
+            }
+        } else if issueSearchNumber == nil, isFilteringAssigned, assignedIssues == nil {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small).scaleEffect(0.7)
+                Text("Loading your issues…")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Palette.textTertiary)
+            }
+            .padding(.vertical, 20)
+        } else if filteredIssues.isEmpty, !(isFilteringAssigned ? isLoadingMoreAssignedIssues : isLoadingMoreIssues) {
+            Text(isFilteringAssigned ? "No open issues assigned to you." : "No open issues.")
+                .font(.system(size: 11.5))
+                .foregroundStyle(Palette.textTertiary)
+                .padding(.vertical, 20)
+        } else {
+            ForEach(filteredIssues) { issue in
+                IssueRow(issue: issue, onSelect: { onSelectIssue(issue) })
+            }
+            if issueSearchNumber == nil {
+                if isFilteringAssigned, hasMoreAssignedIssues {
+                    LoadMoreRow(isLoading: isLoadingMoreAssignedIssues, action: onLoadMoreAssigned)
+                } else if !isFilteringAssigned, hasMoreIssues {
+                    LoadMoreRow(isLoading: isLoadingMoreIssues, action: onLoadMoreIssues)
+                }
+            }
+        }
+    }
+
+    private var issueSearchField: some View {
+        HStack(spacing: 10) {
+            NumberSearchBox(placeholder: "Search issue by number", text: $issueSearchText)
+            Toggle("Assigned to me", isOn: $assignedToMe)
+                .toggleStyle(.checkbox)
+                .font(.system(size: 11))
+                .foregroundStyle(Palette.textSecondary)
+                .disabled(currentLogin == nil)
+                .help(currentLogin.map { "Only issues assigned to @\($0)" } ?? "")
+                .fixedSize()
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 8)
+    }
+
     private var searchField: some View {
         HStack(spacing: 10) {
-            searchBox
+            NumberSearchBox(placeholder: "Search \(repo.provider.pullRequestShort) by number", text: $searchText)
             Toggle("Only mine", isOn: $onlyMine)
                 .toggleStyle(.checkbox)
                 .font(.system(size: 11))
@@ -185,35 +294,6 @@ struct RepoDetailView: View {
         }
         .padding(.horizontal, 12)
         .padding(.top, 8)
-    }
-
-    private var searchBox: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 11))
-                .foregroundStyle(Palette.textTertiary)
-            TextField("Search \(repo.provider.pullRequestShort) by number", text: $searchText)
-                .textFieldStyle(.plain)
-                .font(.system(size: 11.5))
-                .foregroundStyle(Palette.textPrimary)
-                .onChange(of: searchText) { _, newValue in
-                    let digitsOnly = newValue.filter(\.isNumber)
-                    if digitsOnly != newValue { searchText = digitsOnly }
-                }
-            if !searchText.isEmpty {
-                Button {
-                    searchText = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 11))
-                        .foregroundStyle(Palette.textTertiary)
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(RoundedRectangle(cornerRadius: 6).fill(Palette.wash.opacity(0.06)))
     }
 
     private var header: some View {
@@ -241,6 +321,7 @@ struct RepoDetailView: View {
 
             Spacer(minLength: 4)
 
+            WindowButton(action: onOpenInWindow)
             NewPRButton(provider: repo.provider, action: onCreatePR)
         }
         .padding(.horizontal, 12)
@@ -296,6 +377,151 @@ private struct TabLabel: View {
             .contentShape(Rectangle())
             .onTapGesture(perform: action)
             .hoverHighlight($isHovered)
+    }
+}
+
+/// Opens the repo window — a quiet circle beside "New PR".
+private struct WindowButton: View {
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "macwindow")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Palette.textSecondary)
+                .frame(width: 26, height: 26)
+                .background(Circle().fill(Palette.wash.opacity(isHovered ? 0.12 : 0.06)))
+        }
+        .buttonStyle(.plain)
+        .help("Open in a window")
+        .hoverHighlight($isHovered)
+    }
+}
+
+/// The digits-only search field above each list.
+private struct NumberSearchBox: View {
+    let placeholder: String
+    @Binding var text: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11))
+                .foregroundStyle(Palette.textTertiary)
+            TextField(placeholder, text: $text)
+                .textFieldStyle(.plain)
+                .font(.system(size: 11.5))
+                .foregroundStyle(Palette.textPrimary)
+                .onChange(of: text) { _, newValue in
+                    let digitsOnly = newValue.filter(\.isNumber)
+                    if digitsOnly != newValue { text = digitsOnly }
+                }
+            if !text.isEmpty {
+                Button {
+                    text = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Palette.textTertiary)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(RoundedRectangle(cornerRadius: 6).fill(Palette.wash.opacity(0.06)))
+    }
+}
+
+/// Description, then one line of chips: default-branch CI, latest release,
+/// stars, and how many PRs are waiting on your review. Fixed height, so the
+/// lists below don't move when it loads.
+private struct RepoSummaryStrip: View {
+    let summary: RepoSummary?
+    let reviewRequestedCount: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text(summary?.description ?? " ")
+                .font(.system(size: 11))
+                .foregroundStyle(Palette.textSecondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .help(summary?.description ?? "")
+            FirstFitRow(spacing: 6) {
+                if let summary {
+                    branchChip(summary)
+                    if let release = summary.releaseText {
+                        SummaryChip(systemImage: "tag", text: release)
+                            .help("Latest release")
+                    }
+                    if let stars = summary.starsText {
+                        SummaryChip(systemImage: "star", text: stars)
+                            .help("Stars")
+                    }
+                }
+                if reviewRequestedCount > 0 {
+                    SummaryChip(systemImage: nil, text: "\(reviewRequestedCount) needs you",
+                                tint: RepoActivityState.needsAttention.color)
+                        .help("Your review is requested on \(reviewRequestedCount == 1 ? "one" : "\(reviewRequestedCount)") of these")
+                }
+            }
+            .frame(minHeight: 18)
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 9)
+        .frame(maxWidth: .infinity, minHeight: RepoDetailMetrics.summaryHeight,
+               maxHeight: RepoDetailMetrics.summaryHeight, alignment: .topLeading)
+        .animation(.easeOut(duration: 0.2), value: summary)
+    }
+
+    @ViewBuilder
+    private func branchChip(_ summary: RepoSummary) -> some View {
+        let branch = summary.defaultBranch
+        switch summary.branchChecks {
+        case .passed:
+            SummaryChip(systemImage: "checkmark.circle", text: branch, tint: Palette.success)
+                .help("CI on \(branch) passed")
+        case .failing:
+            SummaryChip(systemImage: "xmark.circle", text: branch, tint: Palette.danger)
+                .help("CI on \(branch) is failing")
+        case .running:
+            SummaryChip(systemImage: nil, text: branch, tint: RepoActivityState.busy.color, isRunning: true)
+                .help("CI on \(branch) is running")
+        case .some(.none), .some(.other), nil:
+            SummaryChip(systemImage: "arrow.triangle.branch", text: branch)
+                .help("Default branch")
+        }
+    }
+}
+
+/// One capsule in the summary strip — neutral unless tinted.
+private struct SummaryChip: View {
+    let systemImage: String?
+    let text: String
+    var tint: Color? = nil
+    var isRunning = false
+
+    var body: some View {
+        HStack(spacing: 4) {
+            if isRunning {
+                SpinningArc(color: tint ?? Palette.textSecondary, arcFraction: 0.6)
+                    .frame(width: 9, height: 9)
+            } else if let systemImage {
+                Image(systemName: systemImage)
+                    .font(.system(size: 9.5, weight: .semibold))
+            }
+            Text(text)
+                .font(.system(size: 10.5, weight: tint == nil ? .regular : .semibold))
+                .lineLimit(1)
+        }
+        .fixedSize()
+        .foregroundStyle(tint ?? Palette.textSecondary)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(Capsule().fill((tint ?? Palette.wash).opacity(tint == nil ? 0.07 : 0.13)))
     }
 }
 
@@ -360,9 +586,21 @@ private struct PullRequestRow: View {
             Text("\(provider.formatNumber(pr.id)) opened by @\(pr.author)")
                 .font(.system(size: 11))
                 .foregroundStyle(Palette.textSecondary)
-            HStack {
+                .lineLimit(1)
+            if !pr.labels.isEmpty {
+                LabelRow(labels: pr.labels)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            HStack(spacing: 6) {
                 ChecksStatusLabel(pr: pr)
-                Spacer()
+                Spacer(minLength: 4)
+                // Beside the pill rather than after the author, where a long
+                // username would truncate it away.
+                Text(pr.openedAgo)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Palette.textSecondary)
+                    .lineLimit(1)
+                    .fixedSize()
                 StatusPill(chip: pr.status)
             }
             .padding(.top, 2)
@@ -405,9 +643,13 @@ private struct LoadMoreRow: View {
     }
 }
 
-/// Display-only. Issues are always `#N`, even where PRs are `!N`.
+/// Clicking opens the issue in the repo window (the popover has no issue
+/// screen). Issues are always `#N`, even where PRs are `!N`.
 private struct IssueRow: View {
     let issue: RepoIssue
+    let onSelect: () -> Void
+
+    @State private var isHovered = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -416,20 +658,66 @@ private struct IssueRow: View {
                 .foregroundStyle(issue.statusColor)
                 .padding(.top, 1)
 
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: 5) {
                 Text(issue.title)
                     .font(.system(size: 12.5, weight: .semibold))
                     .foregroundStyle(Palette.textPrimary)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("#\(issue.id) opened by @\(issue.author) · \(issue.metaLabel)")
+                Text("#\(issue.id) opened by @\(issue.author) · \(issue.openedAgo)")
                     .font(.system(size: 10.5))
                     .foregroundStyle(Palette.textSecondary)
+                    .lineLimit(1)
+                if !issue.labels.isEmpty || issue.commentCount > 0 || !issue.assignees.isEmpty {
+                    HStack(spacing: 6) {
+                        LabelRow(labels: issue.labels)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        if issue.commentCount > 0 {
+                            HStack(spacing: 3) {
+                                Image(systemName: "bubble.left")
+                                    .font(.system(size: 9.5))
+                                Text("\(issue.commentCount)")
+                                    .font(.system(size: 10.5))
+                            }
+                            .foregroundStyle(Palette.textSecondary)
+                            .help("\(issue.commentCount) comment\(issue.commentCount == 1 ? "" : "s")")
+                        }
+                        AssigneeStack(assignees: issue.assignees)
+                    }
+                }
             }
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
+        // Owns its height so the hover highlight fills the whole row.
         .frame(maxWidth: .infinity, minHeight: RepoDetailMetrics.rowHeight, alignment: .leading)
+        .background(Palette.wash.opacity(isHovered ? 0.07 : 0))
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .contentShape(Rectangle())
+        .onTapGesture(perform: onSelect)
+        .hoverHighlight($isHovered)
+        .help("Open in the repo window")
+    }
+}
+
+/// Up to two overlapping initials circles; yours in the accent color.
+struct AssigneeStack: View {
+    let assignees: [RepoIssue.Assignee]
+
+    var body: some View {
+        if !assignees.isEmpty {
+            HStack(spacing: -5) {
+                ForEach(assignees.prefix(2)) { assignee in
+                    Text(assignee.initials)
+                        .font(.system(size: 7.5, weight: .bold))
+                        .foregroundStyle(assignee.isMe ? Color.white : Palette.textPrimary)
+                        .frame(width: 17, height: 17)
+                        .background(Circle().fill(assignee.isMe ? Palette.accent : Palette.wash.opacity(0.16)))
+                        .overlay(Circle().strokeBorder(Color(nsColor: .windowBackgroundColor).opacity(0.8), lineWidth: 1))
+                }
+            }
+            .help("Assigned to " + assignees.map { $0.isMe ? "you" : "@\($0.login)" }.joined(separator: ", "))
+        }
     }
 }

@@ -44,6 +44,45 @@ enum Palette {
     static let attention      = Color(nsColor: .systemOrange)
     /// Draft/pending/commented chips and labels.
     static let neutral        = Color(nsColor: .secondaryLabelColor)
+    /// CI in progress — its own cyan-teal, not the system accent (which can
+    /// be any color, and is what links and selection use). Deeper in light
+    /// mode for contrast on white, brighter in dark mode.
+    static let running        = Color(nsColor: NSColor(name: "gitbar.running") { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(srgbRed: 0.35, green: 0.80, blue: 0.88, alpha: 1)   // #59CCE0
+            : NSColor(srgbRed: 0.02, green: 0.52, blue: 0.62, alpha: 1)   // #05859E
+    })
+}
+
+/// Text sizes for the PR / issue detail screens. The popover keeps the
+/// compact sizes it was designed at; the main window uses Apple's macOS
+/// scale (Body 13, Subheadline 11, 10pt floor) — the popover's sizes read
+/// small in a wide window. Set with `.environment(\.detailType, …)`.
+struct DetailTypeScale: Equatable, Sendable {
+    /// Description / issue body.
+    var body: CGFloat
+    /// Comment and review text, plus their author line.
+    var comment: CGFloat
+    /// Check and reviewer names, assignees, empty-state lines, "opened this".
+    var row: CGFloat
+    /// Small actions and status: Details, Running…, Expand All, View diff,
+    /// review state, the PR link, branch chips.
+    var meta: CGFloat
+    /// File paths and diff lines (monospaced).
+    var mono: CGFloat
+    /// Loading lines, comment times, the #12 link, notes in the diff.
+    var small: CGFloat
+    /// Label chips — never under the 10pt floor in the window.
+    var chip: CGFloat
+
+    static let popover = DetailTypeScale(body: 12, comment: 11.5, row: 11.5, meta: 10.5,
+                                         mono: 11, small: 11, chip: 9.5)
+    static let window = DetailTypeScale(body: 13, comment: 13, row: 13, meta: 11,
+                                        mono: 12, small: 12, chip: 10)
+}
+
+extension EnvironmentValues {
+    @Entry var detailType: DetailTypeScale = .popover
 }
 
 /// An account's color — its repo tiles in the popover and its dot in the

@@ -27,7 +27,8 @@ struct PRDetailView: View {
     /// A plain reply into the thread, no verdict.
     var onAddComment: (_ body: String) -> Void = { _ in }
     var isRefreshingDetail: Bool = false
-    var onRefresh: () -> Void = {}
+    /// Awaited, so the screen can confirm with a toast when it's done.
+    var onRefresh: () async -> Void = {}
     var onBack: () -> Void = {}
     /// In its own window: flexible size, no back button.
     var isWindowed = false
@@ -42,11 +43,17 @@ struct PRDetailView: View {
     private static let checksPollInterval: Duration = .seconds(20)
 
     @State private var reviewDraft = ""
-    @State private var showReviewSubmittedToast = false
+    @FocusState private var isComposerFocused: Bool
+    /// The floating confirmation — review/comment sent, refresh done.
+    @State private var toastTitle: String?
+    @State private var toastToken = 0
     /// What the in-flight submission was, for the toast's wording.
     @State private var submittedComment = false
     /// Window only: files whose diff is open, by filename.
     @State private var expandedFiles: Set<String> = []
+    /// Window only: the content column's width — Checks and Reviewers sit
+    /// side by side once there's room for both.
+    @State private var contentWidth: CGFloat = 0
 
     private var draftIsEmpty: Bool {
         reviewDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -54,13 +61,19 @@ struct PRDetailView: View {
 
     /// The window's content column: wide windows center it rather than
     /// stretching lines of text edge to edge.
-    private static let readableWidth: CGFloat = 820
+    private static let readableWidth: CGFloat = 980
+    /// Below this, Checks and Reviewers stack instead of sharing a row.
+    private static let twoColumnWidth: CGFloat = 620
 
     private var horizontalPadding: CGFloat { isWindowed ? 24 : 14 }
+    /// The window's larger, Apple-scale sizes; the popover's compact ones.
+    private var type: DetailTypeScale { isWindowed ? .window : .popover }
 
     var body: some View {
         layout
         .modifier(PRDetailFrame(isWindowed: isWindowed))
+        .environment(\.detailType, type)
+        .environment(\.onLinkCopied) { showToast("Link copied") }
         // Live CI: while anything is running, keep re-reading the check runs
         // so spinners turn into results without a manual refresh.
         .task(id: pr.areChecksRunning) {
@@ -71,11 +84,12 @@ struct PRDetailView: View {
                 await onPollChecks()
             }
         }
-        .overlay(alignment: .top) {
-            if showReviewSubmittedToast {
-                ReviewSubmittedToast(title: submittedComment ? "Comment posted" : "Review submitted")
-                    .padding(.top, 8)
-                    .transition(.move(edge: .top).combined(with: .opacity))
+        .overlay(alignment: isWindowed ? .bottom : .top) {
+            if let toastTitle {
+                ReviewSubmittedToast(title: toastTitle)
+                    // In the window it floats above the composer, like Settings' toasts.
+                    .padding(isWindowed ? .bottom : .top, isWindowed ? 150 : 8)
+                    .transition(.move(edge: isWindowed ? .bottom : .top).combined(with: .opacity))
             }
         }
         // Clear the draft only when a submission finishes without an error —
@@ -83,13 +97,26 @@ struct PRDetailView: View {
         .onChange(of: isSubmittingReview) { wasSubmitting, isSubmitting in
             guard wasSubmitting, !isSubmitting, reviewSubmitError == nil else { return }
             reviewDraft = ""
-            withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-                showReviewSubmittedToast = true
-            }
-            Task {
-                try? await Task.sleep(nanoseconds: 2_200_000_000)
-                withAnimation(.easeOut(duration: 0.25)) { showReviewSubmittedToast = false }
-            }
+            showToast(submittedComment ? "Comment posted" : "Review submitted")
+        }
+    }
+
+    private func showToast(_ title: String) {
+        toastToken += 1
+        let token = toastToken
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) { toastTitle = title }
+        Task {
+            try? await Task.sleep(nanoseconds: 2_200_000_000)
+            guard token == toastToken else { return }
+            withAnimation(.easeOut(duration: 0.25)) { toastTitle = nil }
+        }
+    }
+
+    /// Every manual refresh says when it's done.
+    private func refreshTapped() {
+        Task {
+            await onRefresh()
+            showToast("\(provider.pullRequestShort) \(provider.formatNumber(pr.id)) is up to date")
         }
     }
 
@@ -129,9 +156,10 @@ struct PRDetailView: View {
                 LazyVStack(alignment: .leading, spacing: 0) {
                     header
                     divider
-                    sections
+                    windowSections
                 }
                 .frame(maxWidth: Self.readableWidth)
+                .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { contentWidth = $0 }
                 .frame(maxWidth: .infinity)
                 .padding(.bottom, 8)
             }
@@ -152,7 +180,10 @@ struct PRDetailView: View {
     private var windowToolbar: some ToolbarContent {
         ToolbarItemGroup {
             if let url = pr.webURL {
-                Button("Copy Link", systemImage: "link") { copyToPasteboard(url.absoluteString) }
+                Button("Copy Link", systemImage: "link") {
+                    copyToPasteboard(url.absoluteString)
+                    showToast("Link copied")
+                }
                     .help("Copy link")
                 Button("Open in Browser", systemImage: "safari") { NSWorkspace.shared.open(url) }
                     .help("Open in browser")
@@ -163,7 +194,7 @@ struct PRDetailView: View {
                 ProgressView().controlSize(.small)
                     .help("Refreshing…")
             } else {
-                Button("Refresh", systemImage: "arrow.clockwise", action: onRefresh)
+                Button("Refresh", systemImage: "arrow.clockwise", action: refreshTapped)
                     .help("Refresh")
             }
         }
@@ -190,6 +221,35 @@ struct PRDetailView: View {
         commentsSection
     }
 
+    /// The window, like the mockup: the header carries author and branches,
+    /// then the description, Checks beside Reviewers (stacked when narrow),
+    /// and full-width files and conversation.
+    @ViewBuilder
+    private var windowSections: some View {
+        if !pr.description.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            description
+            divider
+        }
+        if contentWidth >= Self.twoColumnWidth {
+            HStack(alignment: .top, spacing: 0) {
+                checksSection
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                Rectangle().fill(Palette.wash.opacity(0.07)).frame(width: 1)
+                reviewersSection
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+            .fixedSize(horizontal: false, vertical: true)
+        } else {
+            checksSection
+            divider
+            reviewersSection
+        }
+        divider
+        windowFilesSection
+        divider
+        commentsSection
+    }
+
     /// Each file is its own row of the enclosing `LazyVStack`, so a PR with
     /// 100 files only builds the ones scrolled into view.
     @ViewBuilder
@@ -203,7 +263,7 @@ struct PRDetailView: View {
                     expandedFiles = allOpen ? [] : Set(pr.files.map(\.id))
                 }
                 .buttonStyle(.link)
-                .font(.system(size: 10.5, weight: .semibold))
+                .font(.system(size: type.meta, weight: .semibold))
             }
             if let diffURL = pr.diffURL {
                 ViewDiffLink(url: diffURL)
@@ -219,7 +279,7 @@ struct PRDetailView: View {
                     loadingRow
                 } else {
                     Text("No file changes.")
-                        .font(.system(size: 11.5))
+                        .font(.system(size: type.row))
                         .foregroundStyle(Palette.textTertiary)
                 }
             }
@@ -251,7 +311,7 @@ struct PRDetailView: View {
         HStack(spacing: 6) {
             ProgressView().controlSize(.small).scaleEffect(0.7)
             Text("Loading…")
-                .font(.system(size: 11))
+                .font(.system(size: type.small))
                 .foregroundStyle(Palette.textTertiary)
         }
     }
@@ -270,8 +330,15 @@ struct PRDetailView: View {
                         PRNumberLink(text: provider.formatNumber(pr.id), url: url)
                     } else {
                         Text(provider.formatNumber(pr.id))
-                            .font(.system(size: 11))
+                            .font(.system(size: type.small))
                             .foregroundStyle(Palette.tabIdle)
+                    }
+                    if isWindowed {
+                        // The popover has these as their own rows.
+                        Text("@\(pr.author) opened this \(pr.openedAgo)")
+                            .font(.system(size: type.row))
+                            .foregroundStyle(Palette.textSecondary)
+                            .lineLimit(1)
                     }
                 }
                 Text(pr.title)
@@ -279,6 +346,16 @@ struct PRDetailView: View {
                     .foregroundStyle(Palette.textPrimary)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
+                if isWindowed {
+                    HStack(spacing: 8) {
+                        BranchChip(name: pr.headBranch)
+                        Image(systemName: "arrow.right")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(Palette.textTertiary)
+                        BranchChip(name: pr.baseBranch)
+                    }
+                    .padding(.top, 2)
+                }
                 if let url = pr.webURL {
                     PRLinkRow(url: url)
                 }
@@ -288,10 +365,10 @@ struct PRDetailView: View {
 
             if !isWindowed {
                 if let onOpenInWindow {
-                    HeaderIconButton(systemImage: "macwindow", help: "Open in a separate window", action: onOpenInWindow)
+                    HeaderIconButton(systemImage: "macwindow", help: "Open in the repo window", action: onOpenInWindow)
                         .padding(.top, 1)
                 }
-                RefreshButton(isRefreshing: isRefreshingDetail, action: onRefresh)
+                RefreshButton(isRefreshing: isRefreshingDetail, action: refreshTapped)
                     .padding(.top, 1)
             }
         }
@@ -329,7 +406,7 @@ struct PRDetailView: View {
     }
 
     private var description: some View {
-        RenderedBodyText(markdown: pr.description, fontSize: 12, textColor: Palette.textBody)
+        RenderedBodyText(markdown: pr.description, fontSize: type.body, textColor: Palette.textBody)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.horizontal, horizontalPadding)
@@ -343,7 +420,7 @@ struct PRDetailView: View {
                 loadingRow
             } else if pr.reviewers.isEmpty {
                 Text("No reviewers requested.")
-                    .font(.system(size: 11.5))
+                    .font(.system(size: type.row))
                     .foregroundStyle(Palette.textTertiary)
             } else {
                 VStack(spacing: 6) {
@@ -362,13 +439,13 @@ struct PRDetailView: View {
             HStack(spacing: 8) {
                 SectionLabel("Checks")
                 Spacer(minLength: 0)
-                ChecksStatusLabel(pr: pr, fontSize: 10.5)
+                ChecksStatusLabel(pr: pr, fontSize: type.meta)
             }
             if pr.checks.isEmpty && isLoadingChecks {
                 loadingRow
             } else if pr.checks.isEmpty {
                 Text("No checks reported.")
-                    .font(.system(size: 11.5))
+                    .font(.system(size: type.row))
                     .foregroundStyle(Palette.textTertiary)
             }
             VStack(spacing: 6) {
@@ -394,7 +471,7 @@ struct PRDetailView: View {
                 loadingRow
             } else if pr.files.isEmpty {
                 Text("No file changes.")
-                    .font(.system(size: 11.5))
+                    .font(.system(size: type.row))
                     .foregroundStyle(Palette.textTertiary)
             } else {
                 VStack(spacing: 6) {
@@ -415,7 +492,7 @@ struct PRDetailView: View {
                 loadingRow
             } else if pr.comments.isEmpty {
                 Text("No comments yet.")
-                    .font(.system(size: 11.5))
+                    .font(.system(size: type.row))
                     .foregroundStyle(Palette.textTertiary)
             } else {
                 LazyVStack(alignment: .leading, spacing: 12) {
@@ -435,30 +512,42 @@ struct PRDetailView: View {
         VStack(alignment: .trailing, spacing: 8) {
             if let reviewSubmitError {
                 Text(reviewSubmitError)
-                    .font(.system(size: 10.5))
+                    .font(.system(size: type.meta))
                     .foregroundStyle(Palette.danger)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
             ZStack(alignment: .topLeading) {
-                RoundedRectangle(cornerRadius: 10)
-                    .fill(Palette.wash.opacity(0.03))
-                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Palette.wash.opacity(0.08)))
+                composerField
                 if reviewDraft.isEmpty {
-                    Text("Leave a comment — optional for Approve")
-                        .font(.system(size: 11.5))
+                    // Sits exactly where typed text starts: the editor's own
+                    // padding plus NSTextView's 5pt line-fragment padding.
+                    Text(isWindowed ? "Leave a comment (optional for Approve)"
+                                    : "Leave a comment — optional for Approve")
+                        .font(.system(size: composerFontSize))
                         .foregroundStyle(Palette.textPlaceholder)
-                        .padding(10)
+                        .padding(.leading, composerInset + 5)
+                        .padding(.top, composerInset)
                         .allowsHitTesting(false)
                 }
                 TextEditor(text: $reviewDraft)
-                    .font(.system(size: 11.5))
+                    .font(.system(size: composerFontSize))
                     .foregroundStyle(Palette.textPrimary)
                     .scrollContentBackground(.hidden)
-                    .padding(6)
+                    // With "Show scroll bars: Always" an empty box showed a
+                    // scroller track; overlay scrollers appear only on scroll.
+                    .background(OverlayScrollers())
+                    .padding(composerInset)
+                    .focused($isComposerFocused)
                     .disabled(isSubmittingReview)
+                    // SwiftUI hands a newly shown screen's first text view
+                    // focus; nothing should be focused until clicked.
+                    .task(id: pr.id) {
+                        try? await Task.sleep(for: .milliseconds(250))
+                        if reviewDraft.isEmpty { isComposerFocused = false }
+                    }
             }
-            .frame(height: isWindowed ? 72 : 52)
+            .frame(height: isWindowed ? 96 : 52)
 
             HStack(spacing: 8) {
                 if isSubmittingReview {
@@ -466,7 +555,7 @@ struct PRDetailView: View {
                 }
                 Spacer(minLength: 0)
                 if isWindowed {
-                    nativeReviewActions
+                    largeReviewActions
                 } else {
                     ReviewActionButton(title: "Comment", color: Palette.neutral, isDisabled: isSubmittingReview || draftIsEmpty) {
                         submittedComment = true
@@ -491,6 +580,23 @@ struct PRDetailView: View {
 }
 
 private extension PRDetailView {
+    var composerFontSize: CGFloat { isWindowed ? 13 : 11.5 }
+    var composerInset: CGFloat { isWindowed ? 8 : 6 }
+
+    /// The comment box's surface. In the window: a text-field-like well
+    /// whose border turns accent while typing.
+    @ViewBuilder
+    var composerField: some View {
+        let shape = RoundedRectangle(cornerRadius: isWindowed ? 8 : 10, style: .continuous)
+        if isWindowed {
+            ComposerWell(isFocused: isComposerFocused)
+        } else {
+            shape
+                .fill(Palette.wash.opacity(0.03))
+                .overlay(shape.strokeBorder(Palette.wash.opacity(0.08)))
+        }
+    }
+
     /// Stock buttons in the window — the system draws them in the current
     /// macOS style (Liquid Glass on 26) instead of the popover's pills.
     @ViewBuilder
@@ -515,6 +621,59 @@ private extension PRDetailView {
         .buttonStyle(.borderedProminent)
         .tint(RepoActivityState.idle.color)
         .disabled(isSubmittingReview)
+    }
+
+    /// The window's review buttons at the large control size.
+    var largeReviewActions: some View {
+        HStack(spacing: 10) { nativeReviewActions }
+            .controlSize(.large)
+    }
+}
+
+/// The window's comment box surface (PR and issue screens): a
+/// text-field-like well whose border turns accent while typing.
+struct ComposerWell: View {
+    let isFocused: Bool
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
+        shape
+            .fill(Color(nsColor: .textBackgroundColor).opacity(0.6))
+            .overlay(shape.strokeBorder(isFocused ? Color.accentColor.opacity(0.8)
+                                                  : Color(nsColor: .separatorColor),
+                                        lineWidth: isFocused ? 1.5 : 1))
+            .animation(.easeOut(duration: 0.15), value: isFocused)
+    }
+}
+
+/// Gives the `TextEditor` it sits behind overlay scrollers. SwiftUI offers
+/// no hook into its `NSScrollView`, so this finds the text scroll view that
+/// shares its frame.
+struct OverlayScrollers: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView { Probe() }
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async { (nsView as? Probe)?.apply() }
+    }
+
+    final class Probe: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            DispatchQueue.main.async { [weak self] in self?.apply() }
+        }
+
+        func apply() {
+            guard let root = window?.contentView else { return }
+            let frame = convert(bounds, to: nil)
+            func walk(_ view: NSView) {
+                if let scroll = view as? NSScrollView, scroll.documentView is NSTextView,
+                   scroll.convert(scroll.bounds, to: nil).intersects(frame) {
+                    scroll.scrollerStyle = .overlay
+                    scroll.autohidesScrollers = true
+                    return
+                }
+                view.subviews.forEach(walk)
+            }
+            walk(root)
+        }
     }
 }
 
@@ -560,7 +719,7 @@ private struct ReviewSubmittedToast: View {
     }
 }
 
-private struct SectionLabel: View {
+struct SectionLabel: View {
     let text: String
     init(_ text: String) { self.text = text }
     var body: some View {
@@ -573,9 +732,10 @@ private struct SectionLabel: View {
 
 private struct BranchChip: View {
     let name: String
+    @Environment(\.detailType) private var type
     var body: some View {
         Text(name)
-            .font(.system(size: 10.5, design: .monospaced))
+            .font(.system(size: type.meta, design: .monospaced))
             .foregroundStyle(Palette.textComment)
             .textSelection(.enabled)
             .padding(.horizontal, 8)
@@ -589,26 +749,27 @@ private struct CheckRow: View {
     let check: PRCheck
 
     @State private var isHovered = false
+    @Environment(\.detailType) private var type
 
     var body: some View {
         HStack(spacing: 8) {
             icon.frame(width: 14, height: 14)
             Text(check.name)
-                .font(.system(size: 11.5))
+                .font(.system(size: type.row))
                 .foregroundStyle(Palette.textStrong)
             Spacer(minLength: 0)
             if check.status == .running {
                 Text("Running…")
-                    .font(.system(size: 10.5))
+                    .font(.system(size: type.meta))
                     .foregroundStyle(Palette.textTertiary)
             } else if check.status == .skipped {
                 Text("Skipped")
-                    .font(.system(size: 10.5))
+                    .font(.system(size: type.meta))
                     .foregroundStyle(Palette.textTertiary)
             }
             if let url = check.detailsURL {
                 Text("Details")
-                    .font(.system(size: 10.5, weight: .semibold))
+                    .font(.system(size: type.meta, weight: .semibold))
                     .foregroundStyle(isHovered ? Palette.accentHover : Palette.accent)
                     .contentShape(Rectangle())
                     .onTapGesture { NSWorkspace.shared.open(url) }
@@ -648,10 +809,11 @@ private struct ViewDiffLink: View {
     let url: URL
 
     @State private var isHovered = false
+    @Environment(\.detailType) private var type
 
     var body: some View {
         Text("View diff ↗")
-            .font(.system(size: 10.5, weight: .semibold))
+            .font(.system(size: type.meta, weight: .semibold))
             .foregroundStyle(isHovered ? Palette.accentHover : Palette.accent)
             .contentShape(Rectangle())
             .onTapGesture { NSWorkspace.shared.open(url) }
@@ -662,6 +824,7 @@ private struct ViewDiffLink: View {
 /// One file's line in the list — also the header of `DiffFileView`.
 struct FileChangeRow: View {
     let file: PRFileChange
+    @Environment(\.detailType) private var type
 
     private var glyph: String {
         switch file.status {
@@ -686,7 +849,7 @@ struct FileChangeRow: View {
                 .foregroundStyle(color)
                 .frame(width: 13)
             Text(file.filename)
-                .font(.system(size: 11, design: .monospaced))
+                .font(.system(size: type.mono, design: .monospaced))
                 .foregroundStyle(Palette.textStrong)
                 .lineLimit(1)
                 .truncationMode(.middle)
@@ -701,13 +864,14 @@ struct FileChangeRow: View {
                         .foregroundStyle(Palette.danger)
                 }
             }
-            .font(.system(size: 10.5, weight: .semibold, design: .monospaced))
+            .font(.system(size: type.meta, weight: .semibold, design: .monospaced))
         }
     }
 }
 
 private struct ReviewerRow: View {
     let reviewer: PRReviewer
+    @Environment(\.detailType) private var type
 
     private var hasBody: Bool {
         !(reviewer.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -722,15 +886,15 @@ private struct ReviewerRow: View {
                     .frame(width: 20, height: 20)
                     .overlay(Text(reviewer.initials).font(.system(size: 8, weight: .bold)).foregroundStyle(.white))
                 Text(reviewer.login)
-                    .font(.system(size: 11.5))
+                    .font(.system(size: type.row))
                     .foregroundStyle(Palette.textStrong)
                 Spacer(minLength: 0)
                 Text(reviewer.state.label)
-                    .font(.system(size: 10.5, weight: .semibold))
+                    .font(.system(size: type.meta, weight: .semibold))
                     .foregroundStyle(reviewer.state.color)
             }
             if hasBody {
-                RenderedBodyText(markdown: reviewer.text ?? "", fontSize: 11.5, textColor: Palette.textComment)
+                RenderedBodyText(markdown: reviewer.text ?? "", fontSize: type.comment, textColor: Palette.textComment)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(.leading, 28)
             }
@@ -761,8 +925,9 @@ struct ReviewActionButton: View {
     }
 }
 
-private struct CommentBubble: View {
+struct CommentBubble: View {
     let comment: PRComment
+    @Environment(\.detailType) private var type
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
@@ -774,10 +939,10 @@ private struct CommentBubble: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 5) {
-                    Text(comment.author).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(Palette.textPrimary)
-                    Text("· \(comment.timeAgo)").font(.system(size: 11)).foregroundStyle(Palette.textTertiary)
+                    Text(comment.author).font(.system(size: type.comment, weight: .semibold)).foregroundStyle(Palette.textPrimary)
+                    Text("· \(comment.timeAgo)").font(.system(size: type.small)).foregroundStyle(Palette.textTertiary)
                 }
-                RenderedBodyText(markdown: comment.text, fontSize: 11.5, textColor: Palette.textComment)
+                RenderedBodyText(markdown: comment.text, fontSize: type.comment, textColor: Palette.textComment)
                     .fixedSize(horizontal: false, vertical: true)
                     .padding(10)
                     .background(RoundedRectangle(cornerRadius: 10).fill(Palette.wash.opacity(0.04)))
@@ -842,6 +1007,7 @@ struct ChecksStatusLabel: View {
 private struct PRNumberLink: View {
     let text: String
     let url: URL
+    @Environment(\.detailType) private var type
 
     @State private var isHovered = false
 
@@ -851,7 +1017,7 @@ private struct PRNumberLink: View {
             Image(systemName: "arrow.up.right")
                 .font(.system(size: 8, weight: .bold))
         }
-        .font(.system(size: 11, weight: .semibold))
+        .font(.system(size: type.small, weight: .semibold))
         .foregroundStyle(isHovered ? Palette.accentHover : Palette.accent)
         .contentShape(Rectangle())
         .onTapGesture { NSWorkspace.shared.open(url) }
@@ -867,6 +1033,8 @@ private struct PRLinkRow: View {
 
     @State private var isHovered = false
     @State private var copied = false
+    @Environment(\.onLinkCopied) private var onLinkCopied
+    @Environment(\.detailType) private var type
 
     private var displayText: String {
         var text = url.absoluteString
@@ -882,7 +1050,7 @@ private struct PRLinkRow: View {
                 .font(.system(size: 9.5, weight: .semibold))
                 .foregroundStyle(Palette.textTertiary)
             Text(displayText)
-                .font(.system(size: 10.5))
+                .font(.system(size: type.meta))
                 .foregroundStyle(isHovered ? Palette.accentHover : Palette.accent)
                 .underline(isHovered)
                 .lineLimit(1)
@@ -894,6 +1062,7 @@ private struct PRLinkRow: View {
                 .contextMenu { LinkMenuItems(url: url) }
             Button {
                 copyToPasteboard(url.absoluteString)
+                onLinkCopied?()
                 withAnimation(.easeOut(duration: 0.15)) { copied = true }
                 Task {
                     try? await Task.sleep(for: .seconds(1.5))
@@ -915,13 +1084,23 @@ private struct PRLinkRow: View {
 
 private struct LinkMenuItems: View {
     let url: URL
+    @Environment(\.onLinkCopied) private var onLinkCopied
     var body: some View {
         Button("Open in Browser") { NSWorkspace.shared.open(url) }
-        Button("Copy Link") { copyToPasteboard(url.absoluteString) }
+        Button("Copy Link") {
+            copyToPasteboard(url.absoluteString)
+            onLinkCopied?()
+        }
     }
 }
 
-private func copyToPasteboard(_ string: String) {
+extension EnvironmentValues {
+    /// Set by a detail screen so every copy spot in it (toolbar, link row,
+    /// context menus) confirms with the screen's toast.
+    @Entry var onLinkCopied: (() -> Void)? = nil
+}
+
+func copyToPasteboard(_ string: String) {
     NSPasteboard.general.clearContents()
     NSPasteboard.general.setString(string, forType: .string)
 }
@@ -978,9 +1157,7 @@ struct PRDetailScreen: View {
                 Task { await repoStore.addComment(repoID: repoID, prID: pr.id, body: body) }
             },
             isRefreshingDetail: repoStore.isRefreshingPRDetail(repoID: repoID, prID: pr.id),
-            onRefresh: {
-                Task { await repoStore.refreshPRDetail(repoID: repoID, prID: pr.id) }
-            },
+            onRefresh: { await repoStore.refreshPRDetail(repoID: repoID, prID: pr.id) },
             onBack: onBack,
             isWindowed: isWindowed,
             onOpenInWindow: onOpenInWindow,

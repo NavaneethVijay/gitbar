@@ -16,15 +16,16 @@ final class MenuViewModel {
 
     @ObservationIgnored let repoStore: LiveRepoStore
     @ObservationIgnored let notificationStore: NotificationStore
-    /// Standalone PR windows, opened from the PR screen's header.
-    @ObservationIgnored let prWindows: PRWindowManager
+    /// The app's main window — every pinned repo's PRs and issues, opened
+    /// from the popover's window buttons and its gear menu.
+    @ObservationIgnored let mainWindow: MainWindowController
     /// Set by `StatusItemController` — the PR screen only polls CI while shown.
     @ObservationIgnored var isPopoverShown = false
 
     init(repoStore: LiveRepoStore, notificationStore: NotificationStore) {
         self.repoStore = repoStore
         self.notificationStore = notificationStore
-        self.prWindows = PRWindowManager(repoStore: repoStore)
+        self.mainWindow = MainWindowController(repoStore: repoStore, notificationStore: notificationStore)
     }
 
     /// An inbox row or a clicked alert: marks it read, then opens a PR from a
@@ -117,7 +118,7 @@ struct MenuContentView: View {
                             }
                         },
                         onOpenInWindow: { [model] in
-                            model.prWindows.open(repoID: repoID, prID: pr.id)
+                            model.mainWindow.open(repoID: repoID, pullRequest: pr.id)
                         },
                         isVisible: { [model] in model.isPopoverShown }
                     )
@@ -179,7 +180,20 @@ struct MenuContentView: View {
                             navigate {
                                 model.isCreatingPullRequest = true
                             }
-                        }
+                        },
+                        summary: repoStore.repoSummaries[repo.id],
+                        assignedIssues: repoStore.assignedIssues[repo.id],
+                        hasMoreAssignedIssues: repoStore.hasMoreAssignedIssues[repo.id] ?? false,
+                        isLoadingMoreAssignedIssues: repoStore.isLoadingMoreAssignedIssues[repo.id] ?? false,
+                        onShowAssigned: { repoStore.beginAssignedIssues(repoID: repo.id) },
+                        onLoadMoreAssigned: { Task { await repoStore.loadMoreAssignedIssues(repoID: repo.id) } },
+                        issueSearchResult: repoStore.issueSearchResults[repo.id],
+                        isSearchingIssue: repoStore.isSearchingIssue[repo.id] ?? false,
+                        issueSearchError: repoStore.issueSearchError[repo.id],
+                        onSearchIssue: { number in Task { await repoStore.searchIssue(repoID: repo.id, number: number) } },
+                        onClearIssueSearch: { repoStore.clearIssueSearch(repoID: repo.id) },
+                        onOpenInWindow: { [model] in model.mainWindow.open(repoID: repo.id) },
+                        onSelectIssue: { [model] issue in model.mainWindow.open(repoID: repo.id, issue: issue.id) }
                     )
                     .transition(.move(edge: .trailing).combined(with: .opacity))
                     .task(id: repo.id) {
@@ -308,7 +322,10 @@ struct MenuContentView: View {
                 }
             }
             Menu {
-                Button("Manage this app…") { SettingsWindowController.shared.show() }
+                Button("Open gitbar") { model.mainWindow.show() }
+                    .keyboardShortcut("0")
+                Button("Settings…") { SettingsWindowController.shared.show() }
+                    .keyboardShortcut(",")
                 Divider()
                 Button("Quit gitbar") { NSApp.terminate(nil) }
             } label: {

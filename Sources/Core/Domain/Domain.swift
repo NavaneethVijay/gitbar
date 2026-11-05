@@ -74,6 +74,14 @@ struct PullRequest: Equatable, Sendable {
     /// The PR's full diff on the web, for "View diff" — the module builds it
     /// (GitHub `{webURL}/files`, GitLab `{webURL}/diffs`).
     var diffURL: URL? = nil
+    var labels: [ItemLabel] = []
+}
+
+/// A label/tag on a PR or issue. `colorHex` is the provider's own color,
+/// with or without a leading `#`; `nil` when it didn't send one.
+struct ItemLabel: Equatable, Sendable {
+    let name: String
+    let colorHex: String?
 }
 
 /// One file touched by a PR, as the provider's diff summary reports it.
@@ -103,6 +111,32 @@ struct Issue: Equatable, Sendable {
     let title: String
     let author: String
     let createdAt: Date
+    var labels: [ItemLabel] = []
+    /// Logins assigned to it.
+    var assignees: [String] = []
+    /// Conversation comments (not counting the description).
+    var commentCount: Int = 0
+    var webURL: URL? = nil
+    /// Raw Markdown description — rendered by `RenderedBodyText`.
+    var body: String = ""
+}
+
+/// The repo screen's summary strip: what the repo is and how its default
+/// branch is doing. Everything but the default branch is best-effort.
+struct RepoOverview: Equatable, Sendable {
+    struct Release: Equatable, Sendable {
+        let tag: String
+        let publishedAt: Date?
+    }
+
+    let description: String?
+    let stars: Int?
+    let defaultBranch: String
+    /// CI on the default branch's head commit; `nil` when it couldn't be read.
+    let defaultBranchChecks: CheckSummary?
+    let latestRelease: Release?
+    /// The repo on the web.
+    var webURL: URL? = nil
 }
 
 /// One PR's combined CI result — the single line on a PR row.
@@ -114,6 +148,17 @@ enum CheckSummary: Equatable, Sendable {
     case none
     /// A state the provider reported that doesn't fit the above.
     case other(String)
+}
+
+extension CheckSummary {
+    /// One verdict from individual runs, for providers that only list runs:
+    /// anything still going → running, any failure → failing.
+    static func combining(_ runs: [CheckRunStatus]) -> CheckSummary {
+        if runs.isEmpty { return .none }
+        if runs.contains(.running) { return .running }
+        if runs.contains(.failed) { return .failing }
+        return .passed
+    }
 }
 
 /// One PR's row-level status, batched per page: combined CI plus the

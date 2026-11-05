@@ -132,26 +132,8 @@ private struct InboxRow: View {
 
     @State private var isHovered = false
 
-    private var icon: String {
-        switch entry.item.kind {
-        case .pullRequest: return "arrow.triangle.pull"
-        case .issue: return "circle.dotted"
-        case .release: return "tag"
-        case .discussion: return "bubble.left.and.bubble.right"
-        case .commit: return "smallcircle.filled.circle"
-        case .checkSuite: return "checkmark.seal"
-        case .other: return "bell"
-        }
-    }
-
-    private var reasonColor: Color {
-        switch entry.item.reason {
-        case .reviewRequested, .assign: return RepoActivityState.needsAttention.color
-        case .mention, .teamMention: return Palette.accent
-        case .securityAlert: return Palette.danger
-        default: return Palette.neutral
-        }
-    }
+    private var icon: String { entry.item.symbolName }
+    private var reasonColor: Color { entry.item.reasonColor }
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -193,5 +175,28 @@ private struct InboxRow: View {
         .contentShape(Rectangle())
         .onTapGesture(perform: action)
         .hoverHighlight($isHovered)
+    }
+}
+
+extension InboxItem {
+    var symbolName: String {
+        switch kind {
+        case .pullRequest: return "arrow.triangle.pull"
+        case .issue: return "circle.dotted"
+        case .release: return "tag"
+        case .discussion: return "bubble.left.and.bubble.right"
+        case .commit: return "smallcircle.filled.circle"
+        case .checkSuite: return "checkmark.seal"
+        case .other: return "bell"
+        }
+    }
+
+    var reasonColor: Color {
+        switch reason {
+        case .reviewRequested, .assign: return RepoActivityState.needsAttention.color
+        case .mention, .teamMention: return Palette.accent
+        case .securityAlert: return Palette.danger
+        default: return Palette.neutral
+        }
     }
 }

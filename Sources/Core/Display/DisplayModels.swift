@@ -16,7 +16,7 @@ extension RepoActivityState {
     var color: Color {
         switch self {
         case .idle: return Palette.success
-        case .busy: return Palette.accent
+        case .busy: return Palette.running
         case .needsAttention: return Palette.attention
         }
     }
@@ -80,6 +80,26 @@ struct PRComment: Identifiable, Equatable {
     let text: String
 }
 
+/// A PR/issue label chip, in the provider's own color.
+struct PRLabel: Identifiable, Equatable {
+    var id: String { name }
+    let name: String
+    let color: Color
+}
+
+/// The repo screen's summary strip under the header.
+struct RepoSummary: Equatable {
+    let description: String?
+    let defaultBranch: String
+    /// `nil` when the branch's CI couldn't be read — the chip goes neutral.
+    let branchChecks: CheckSummary?
+    /// e.g. "v2.4.1 · 3d".
+    let releaseText: String?
+    /// e.g. "1.2k".
+    let starsText: String?
+    let webURL: URL?
+}
+
 /// The colored status pill on a PR row and the PR screen's header.
 struct PRStatusChip: Equatable {
     let label: String
@@ -100,6 +120,7 @@ struct RepoPullRequest: Identifiable, Equatable {
     let isReviewRequestedFromMe: Bool
 
     let openedAgo: String
+    let labels: [PRLabel]
     let headBranch: String
     let baseBranch: String
     let description: String
@@ -138,11 +159,26 @@ struct RepoPullRequest: Identifiable, Equatable {
 }
 
 struct RepoIssue: Identifiable, Equatable {
+    struct Assignee: Identifiable, Equatable {
+        var id: String { login }
+        let login: String
+        let initials: String
+        let isMe: Bool
+    }
+
     let id: Int
     let title: String
     let author: String
     let statusColor: Color
-    let metaLabel: String
+    /// e.g. "2h ago".
+    let openedAgo: String
+    let labels: [PRLabel]
+    let assignees: [Assignee]
+    let commentCount: Int
+    let webURL: URL?
+    let body: String
+    /// For ordering issues from several repos in one list.
+    var createdAt: Date = .distantPast
 }
 
 struct RepoSnapshot: Identifiable, Equatable {

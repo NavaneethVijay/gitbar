@@ -85,7 +85,7 @@ actor GitLabClient: ProviderClient {
     // MARK: - Lists
 
     private func mergeRequestsPath(_ repo: String, perPage: Int, page: Int, author: String? = nil) -> String {
-        var path = "/projects/\(Self.project(repo))/merge_requests?state=opened&order_by=created_at&sort=desc&per_page=\(perPage)&page=\(page)"
+        var path = "/projects/\(Self.project(repo))/merge_requests?state=opened&order_by=created_at&sort=desc&with_labels_details=true&per_page=\(perPage)&page=\(page)"
         if let author { path += "&author_username=\(Self.query(author))" }
         return path
     }
@@ -110,10 +110,11 @@ actor GitLabClient: ProviderClient {
 
     /// A project with issues turned off (common when a team tracks work
     /// elsewhere) answers 403/404 — that's "no issues", not a failure.
-    private func issues(repo: String, perPage: Int, page: Int) async throws -> Page<Issue> {
+    private func issues(repo: String, perPage: Int, page: Int, assignee: String? = nil) async throws -> Page<Issue> {
+        var path = "/projects/\(Self.project(repo))/issues?state=opened&order_by=created_at&sort=desc&with_labels_details=true&per_page=\(perPage)&page=\(page)"
+        if let assignee { path += "&assignee_username=\(Self.query(assignee))" }
         do {
-            let result: (value: [GitLabIssue], hasNextPage: Bool) = try await get(
-                "/projects/\(Self.project(repo))/issues?state=opened&order_by=created_at&sort=desc&per_page=\(perPage)&page=\(page)")
+            let result: (value: [GitLabIssue], hasNextPage: Bool) = try await get(path)
             return Page(items: result.value.map(\.domain), hasNextPage: result.hasNextPage)
         } catch ProviderError.forbidden {
             return Page(items: [], hasNextPage: false)
@@ -125,6 +126,49 @@ actor GitLabClient: ProviderClient {
     func pullRequest(repo: String, number: Int) async throws -> PullRequest {
         let mr: GitLabMergeRequest = try await get("/projects/\(Self.project(repo))/merge_requests/\(number)").value
         return mr.domain
+    }
+
+    func issues(repo: String, page: Int, assignee: String) async throws -> Page<Issue> {
+        try await issues(repo: repo, perPage: 20, page: page, assignee: assignee)
+    }
+
+    func issue(repo: String, number: Int) async throws -> Issue {
+        let issue: GitLabIssue = try await get("/projects/\(Self.project(repo))/issues/\(number)").value
+        return issue.domain
+    }
+
+    /// The project, its newest release and the default branch's latest
+    /// pipeline — plain GETs, all ETag-cacheable. Releases and pipelines are
+    /// best-effort (either feature can be turned off for a project).
+    func overview(repo: String) async throws -> RepoOverview {
+        let project = Self.project(repo)
+        let info: GitLabProjectInfo = try await get("/projects/\(project)").value
+        let branch = info.defaultBranch ?? "main"
+        async let releasesTask: (value: [GitLabRelease], hasNextPage: Bool)? = try? get("/projects/\(project)/releases?per_page=1")
+        async let pipelinesTask: (value: [GitLabPipeline], hasNextPage: Bool)? =
+            try? get("/projects/\(project)/pipelines?ref=\(Self.query(branch))&per_page=1")
+        let (releases, pipelines) = await (releasesTask, pipelinesTask)
+        return RepoOverview(
+            description: info.description,
+            stars: info.starCount,
+            defaultBranch: branch,
+            defaultBranchChecks: pipelines.map { GitLabMapping.checkSummary(pipelineStatus: $0.value.first?.status) },
+            latestRelease: releases?.value.first.map { RepoOverview.Release(tag: $0.tagName, publishedAt: $0.releasedAt) },
+            webURL: info.webURL)
+    }
+
+    /// Human comments only — system notes ("changed the label") left out.
+    func issueComments(repo: String, number: Int) async throws -> [Comment] {
+        let notes: [GitLabNote] = try await get(
+            "/projects/\(Self.project(repo))/issues/\(number)/notes?sort=asc&order_by=created_at&per_page=50").value
+        return notes.filter { $0.system != true }.map(\.domain)
+    }
+
+    func addIssueComment(repo: String, number: Int, body: String) async throws -> Comment {
+        struct NewNote: Encodable { let body: String }
+        let created: GitLabNote = try await transport.send(
+            "POST", url("/projects/\(Self.project(repo))/issues/\(number)/notes"), body: NewNote(body: body))
+        return created.domain
     }
 
     /// GitLab's MR list filters by author server-side — same endpoint.

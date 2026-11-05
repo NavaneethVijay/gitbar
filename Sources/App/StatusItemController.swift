@@ -25,6 +25,23 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         super.init()
 
         Task { await repoStore.refresh() }
+        #if DEBUG
+        // `open gitbar.app --args -debugOpenMainWindow YES` opens the main
+        // window at launch, on the first pinned repo — for checking its layout.
+        if UserDefaults.standard.bool(forKey: "debugOpenMainWindow") {
+            Task { [weak self] in
+                guard let self else { return }
+                await repoStore.refresh()
+                if let first = repoStore.snapshots.first(where: { !$0.pullRequests.isEmpty }) ?? repoStore.snapshots.first {
+                    // `-debugOpenMainWindowPR YES` also selects its first PR.
+                    let pr = UserDefaults.standard.bool(forKey: "debugOpenMainWindowPR") ? first.pullRequests.first?.id : nil
+                    model.mainWindow.open(repoID: first.id, pullRequest: pr)
+                } else {
+                    model.mainWindow.show()
+                }
+            }
+        }
+        #endif
         Task {
             // Accounts added before token checks existed get checked once.
             await settings.accountStore.refreshMissingAccess()
@@ -69,11 +86,26 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         if popover.isShown {
             repoStore.refreshVisibleScreen(repoID: model.selectedRepoID, prID: model.selectedPullRequestID)
         }
-        // Open PR windows stay fresh whether or not the popover is.
-        for pr in model.prWindows.openPullRequests {
-            repoStore.beginPRDetail(repoID: pr.repo, prID: pr.number)
+        // The main window stays fresh whether or not the popover is: the
+        // repos its list draws from, plus the selected PR or issue.
+        if let open = model.mainWindow.refreshTargets {
+            for repo in open.repos {
+                switch open.section {
+                case .createdByMe: repoStore.beginMinePullRequests(repoID: repo)
+                case .assignedToMe: repoStore.beginAssignedIssues(repoID: repo)
+                default: repoStore.beginRepoDetail(repoID: repo)
+                }
+            }
+            if let pr = open.pullRequest { repoStore.beginPRDetail(repoID: pr.repo, prID: pr.number) }
+            if let issue = open.issue { repoStore.beginIssueDetail(repoID: issue.repo, number: issue.number) }
         }
         await repoStore.refresh()
+    }
+
+    /// The app menu's "Open gitbar".
+    func showMainWindow() {
+        if popover.isShown { popover.performClose(nil) }
+        model.mainWindow.show()
     }
 
     @objc private func togglePopover() {

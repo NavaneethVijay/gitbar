@@ -91,7 +91,7 @@ struct DiffFileView: View {
         } else {
             HStack(spacing: 6) {
                 ProgressView().controlSize(.small).scaleEffect(0.7)
-                Text("Loading diff…").font(.system(size: 11)).foregroundStyle(Palette.textTertiary)
+                Text("Loading diff…").font(.system(size: DetailTypeScale.window.small)).foregroundStyle(Palette.textTertiary)
             }
             .padding(.leading, 20)
         }
@@ -123,7 +123,8 @@ struct DiffFileView: View {
 private struct DiffLineRow: View {
     let line: UnifiedDiff.Line
 
-    private static let numberWidth: CGFloat = 36
+    /// Five digits at the window's 12pt monospaced size.
+    private static let numberWidth: CGFloat = 40
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 0) {
@@ -146,7 +147,7 @@ private struct DiffLineRow: View {
             }
             Spacer(minLength: 0)
         }
-        .font(.system(size: 11, design: .monospaced))
+        .font(.system(size: DetailTypeScale.window.mono, design: .monospaced))
         .padding(.vertical, 0.5)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(background)
@@ -192,15 +193,15 @@ private struct DiffNote: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: icon)
-                .font(.system(size: 11))
+                .font(.system(size: DetailTypeScale.window.small))
                 .foregroundStyle(Palette.textTertiary)
             Text(text)
-                .font(.system(size: 11))
+                .font(.system(size: DetailTypeScale.window.small))
                 .foregroundStyle(Palette.textSecondary)
             Spacer(minLength: 8)
             if let actionTitle {
                 Text(actionTitle)
-                    .font(.system(size: 11, weight: .semibold))
+                    .font(.system(size: DetailTypeScale.window.small, weight: .semibold))
                     .foregroundStyle(isHovered ? Palette.accentHover : Palette.accent)
                     .contentShape(Rectangle())
                     .onTapGesture(perform: action)
@@ -221,7 +222,7 @@ private struct ShowMoreRow: View {
 
     var body: some View {
         Text(title)
-            .font(.system(size: 11, weight: .semibold))
+            .font(.system(size: DetailTypeScale.window.small, weight: .semibold))
             .foregroundStyle(isHovered ? Palette.tabHover : Palette.tabIdle)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 7)

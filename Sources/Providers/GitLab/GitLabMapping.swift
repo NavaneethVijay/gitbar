@@ -14,13 +14,20 @@ extension GitLabMergeRequest {
             requestedReviewers: (reviewers ?? []).map(\.username),
             sourceBranch: sourceBranch, targetBranch: targetBranch, headSHA: sha ?? "",
             body: description ?? "", createdAt: createdAt, webURL: webURL,
-            diffURL: webURL?.appendingPathComponent("diffs"))
+            diffURL: webURL?.appendingPathComponent("diffs"),
+            labels: (labels ?? []).map(\.domain))
     }
+}
+
+extension GitLabLabel {
+    var domain: ItemLabel { ItemLabel(name: name, colorHex: color) }
 }
 
 extension GitLabIssue {
     var domain: Issue {
-        Issue(number: iid, title: title, author: author?.username ?? "", createdAt: createdAt)
+        Issue(number: iid, title: title, author: author?.username ?? "", createdAt: createdAt,
+              labels: (labels ?? []).map(\.domain), assignees: (assignees ?? []).map(\.username),
+              commentCount: userNotesCount ?? 0, webURL: webURL, body: description ?? "")
     }
 }
 

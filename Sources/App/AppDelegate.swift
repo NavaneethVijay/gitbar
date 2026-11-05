@@ -70,6 +70,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         SettingsWindowController.shared.show()
     }
 
+    @objc private func showMainWindow(_ sender: Any?) {
+        statusItemController?.showMainWindow()
+    }
+
     /// Shown only while a window gives the app a Dock icon; the rest of the
     /// time (popover only, accessory app) it's invisible, but its key
     /// equivalents are what route ⌘C / ⌘V / ⌘X / ⌘A / ⌘Z to the first
@@ -105,6 +109,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let window = NSMenu(title: "Window")
         window.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         window.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        window.addItem(.separator())
+        // Like Mail's "Message Viewer ⌘0".
+        let mainWindow = window.addItem(withTitle: "gitbar", action: #selector(showMainWindow(_:)), keyEquivalent: "0")
+        mainWindow.target = self
         main.addItem(submenuItem(title: "Window", menu: window))
         // AppKit lists the open windows (Settings, each PR) under it.
         NSApp.windowsMenu = window

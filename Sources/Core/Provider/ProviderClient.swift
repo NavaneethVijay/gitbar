@@ -29,6 +29,17 @@ protocol ProviderClient: Actor {
     /// Open PRs by one author, paged like `pullRequests(repo:page:)` — the
     /// repo screen's "Only mine" filter, done server-side.
     func pullRequests(repo: String, page: Int, author: String) async throws -> Page<PullRequest>
+    /// Open issues assigned to one login — the Issues tab's "Assigned to me".
+    func issues(repo: String, page: Int, assignee: String) async throws -> Page<Issue>
+    /// One issue by number, for the Issues tab's number search. Throws when
+    /// it doesn't exist (or the number is a PR).
+    func issue(repo: String, number: Int) async throws -> Issue
+    /// Description, stars, default branch + its CI, latest release — the
+    /// repo screen's summary strip. Ideally ETag-cacheable GETs only.
+    func overview(repo: String) async throws -> RepoOverview
+    /// An issue's conversation, oldest first (like `comments` for a PR).
+    func issueComments(repo: String, number: Int) async throws -> [Comment]
+    func addIssueComment(repo: String, number: Int, body: String) async throws -> Comment
 
     // One PR's details.
     /// Combined CI result and review verdict per PR, for a whole page at

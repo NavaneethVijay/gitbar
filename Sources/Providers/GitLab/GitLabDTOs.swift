@@ -36,10 +36,47 @@ struct GitLabProjectInfo: Decodable {
     /// The project's default MR description (a Premium setting) — what
     /// GitLab's own form prefills when no `Default` template exists.
     let mergeRequestsTemplate: String?
+    let description: String?
+    let starCount: Int?
+    let webURL: URL?
 
     enum CodingKeys: String, CodingKey {
+        case description
+        case webURL = "web_url"
         case defaultBranch = "default_branch"
         case mergeRequestsTemplate = "merge_requests_template"
+        case starCount = "star_count"
+    }
+}
+
+/// A label as GitLab sends it: a bare name by default, or an object with
+/// its color when the list asked for `with_labels_details=true`.
+struct GitLabLabel: Decodable {
+    let name: String
+    /// "#d73a4a".
+    let color: String?
+
+    private enum CodingKeys: String, CodingKey { case name, color }
+
+    init(from decoder: Decoder) throws {
+        if let name = try? decoder.singleValueContainer().decode(String.self) {
+            self.name = name
+            color = nil
+        } else {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            name = try container.decode(String.self, forKey: .name)
+            color = try container.decodeIfPresent(String.self, forKey: .color)
+        }
+    }
+}
+
+struct GitLabRelease: Decodable {
+    let tagName: String
+    let releasedAt: Date?
+
+    enum CodingKeys: String, CodingKey {
+        case tagName = "tag_name"
+        case releasedAt = "released_at"
     }
 }
 
@@ -64,9 +101,10 @@ struct GitLabMergeRequest: Decodable {
     let description: String?
     let createdAt: Date
     let webURL: URL?
+    let labels: [GitLabLabel]?
 
     enum CodingKeys: String, CodingKey {
-        case iid, title, author, state, draft, reviewers, sha, description
+        case iid, title, author, state, draft, reviewers, sha, description, labels
         case workInProgress = "work_in_progress"
         case sourceBranch = "source_branch"
         case targetBranch = "target_branch"
@@ -80,10 +118,17 @@ struct GitLabIssue: Decodable {
     let title: String
     let author: GitLabUserRef?
     let createdAt: Date
+    let labels: [GitLabLabel]?
+    let assignees: [GitLabUserRef]?
+    let userNotesCount: Int?
+    let webURL: URL?
+    let description: String?
 
     enum CodingKeys: String, CodingKey {
-        case iid, title, author
+        case iid, title, author, labels, assignees, description
         case createdAt = "created_at"
+        case userNotesCount = "user_notes_count"
+        case webURL = "web_url"
     }
 }
 

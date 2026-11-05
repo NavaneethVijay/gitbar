@@ -14,6 +14,7 @@ enum DisplayMapper {
             statusSummary: nil,
             isReviewRequestedFromMe: pr.requestedReviewers.contains(login),
             openedAgo: relativeTime(from: pr.createdAt),
+            labels: pr.labels.map(label),
             headBranch: pr.sourceBranch, baseBranch: pr.targetBranch,
             description: pr.body,
             checks: [], comments: [], reviewers: [], files: [],
@@ -52,10 +53,56 @@ enum DisplayMapper {
         return nil
     }
 
-    static func issue(_ issue: Issue) -> RepoIssue {
+    /// `login` is the account's own user, for the "you" assignee mark.
+    static func issue(_ issue: Issue, login: String) -> RepoIssue {
         RepoIssue(id: issue.number, title: issue.title, author: issue.author,
                   statusColor: RepoActivityState.idle.color,
-                  metaLabel: "Opened \(relativeTime(from: issue.createdAt))")
+                  openedAgo: relativeTime(from: issue.createdAt),
+                  labels: issue.labels.map(label),
+                  assignees: issue.assignees.map {
+                      RepoIssue.Assignee(login: $0, initials: initials(for: $0), isMe: $0 == login)
+                  },
+                  commentCount: issue.commentCount, webURL: issue.webURL, body: issue.body,
+                  createdAt: issue.createdAt)
+    }
+
+    static func label(_ label: ItemLabel) -> PRLabel {
+        PRLabel(name: label.name, color: label.colorHex.flatMap(color(hex:)) ?? Palette.neutral)
+    }
+
+    static func summary(_ overview: RepoOverview) -> RepoSummary {
+        let release = overview.latestRelease.map { release in
+            release.publishedAt.map { "\(release.tag) · \(shortRelativeTime(from: $0))" } ?? release.tag
+        }
+        let description = overview.description?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return RepoSummary(
+            description: description?.isEmpty == false ? description : nil,
+            defaultBranch: overview.defaultBranch,
+            branchChecks: overview.defaultBranchChecks,
+            releaseText: release,
+            starsText: overview.stars.map(compactCount),
+            webURL: overview.webURL)
+    }
+
+    /// 950 → "950", 1234 → "1.2k", 12_500 → "12k", 2_300_000 → "2.3M".
+    static func compactCount(_ value: Int) -> String {
+        func trimmed(_ number: Double, _ suffix: String) -> String {
+            let text = number < 10 ? String(format: "%.1f", number) : String(Int(number))
+            return (text.hasSuffix(".0") ? String(text.dropLast(2)) : text) + suffix
+        }
+        if value >= 1_000_000 { return trimmed(Double(value) / 1_000_000, "M") }
+        if value >= 1_000 { return trimmed(Double(value) / 1_000, "k") }
+        return "\(value)"
+    }
+
+    /// "d73a4a" or "#d73a4a" → a color; `nil` for anything else.
+    static func color(hex: String) -> Color? {
+        var digits = hex.trimmingCharacters(in: .whitespaces)
+        if digits.hasPrefix("#") { digits.removeFirst() }
+        guard digits.count == 6, let value = UInt32(digits, radix: 16) else { return nil }
+        return Color(red: Double((value >> 16) & 0xFF) / 255,
+                     green: Double((value >> 8) & 0xFF) / 255,
+                     blue: Double(value & 0xFF) / 255)
     }
 
     static func checksLabel(for summary: CheckSummary) -> (label: String, color: Color) {
@@ -126,12 +173,18 @@ enum DisplayMapper {
             id: repo, provider: provider, name: repo.name, state: state,
             statusLabel: statusLabel, metaLabel: metaLabel,
             pullRequests: recentPulls.map { pullRequest($0, login: login) },
-            issues: recentIssues.map(issue)
+            issues: recentIssues.map { issue($0, login: login) }
         )
     }
 
     static func initials(for name: String) -> String {
         String(name.prefix(2)).uppercased()
+    }
+
+    /// "3d" — `relativeTime` without the "ago", for tight chips.
+    static func shortRelativeTime(from date: Date) -> String {
+        let text = relativeTime(from: date)
+        return text.hasSuffix(" ago") ? String(text.dropLast(4)) : text
     }
 
     static func relativeTime(from date: Date) -> String {

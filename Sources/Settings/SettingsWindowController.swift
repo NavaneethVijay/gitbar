@@ -18,7 +18,7 @@ final class SettingsWindowController: NSWindowController {
 
         let hosting = NSHostingController(
             rootView: SettingsView(accountStore: accountStore, favoriteStore: favoriteStore, updater: updater,
-                                   notificationStore: notificationStore)
+                                   notificationStore: notificationStore, navigator: navigator)
         )
         // The window owns its size: with the default options, switching detail
         // screens in the NavigationSplitView wedged layout and blanked the window.
@@ -37,9 +37,30 @@ final class SettingsWindowController: NSWindowController {
         self.window = window
     }
 
+    /// Asks the open Settings view to switch pages (the main window's
+    /// "Account Settings…", "Add Account…").
+    let navigator = SettingsNavigator()
+
     func show() {
         // An accessory app must activate first, or this opens behind everything.
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
     }
+
+    func show(_ selection: SettingsView.Selection) {
+        navigator.request = selection
+        show()
+    }
+
+    func showAccount(_ id: UUID) { show(.account(id)) }
+
+    /// Add Account for the first provider that has a module.
+    func showAddAccount() {
+        show(.addAccount(ProviderKind.allCases.first(where: \.isAvailable) ?? .github))
+    }
+}
+
+@MainActor
+final class SettingsNavigator: ObservableObject {
+    @Published var request: SettingsView.Selection?
 }
