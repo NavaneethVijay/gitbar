@@ -4,17 +4,22 @@ A native macOS menu bar app for your git repos. Pin the repos you care about, se
 
 GitHub (github.com and GitHub Enterprise Server) and GitLab (GitLab.com and GitLab Self-Managed) are supported today; the app is built so Bitbucket is one more module.
 
+**Website:** [navaneethvijay.github.io/gitbar](https://navaneethvijay.github.io/gitbar/)
+
 <p align="center">
-  <img src="screenshots/pinned-repos.png" width="360" alt="Pinned repos">
-  <img src="screenshots/repo-detail.png" width="360" alt="Repo detail: pull requests and issues">
+  <img src="docs/assets/screens/main-review-requested.png" width="860" alt="Main window: Review Requested across every repo, with a pull request open">
 </p>
 <p align="center">
-  <img src="screenshots/pr-detail.png" width="360" alt="Pull request detail">
-  <img src="screenshots/new-pr.png" width="360" alt="Create a pull request">
+  <img src="docs/assets/screens/popover-menu.png" width="270" alt="Menu bar popover: pinned repos and their status">
+  <img src="docs/assets/screens/popover-prs.png" width="270" alt="Menu bar popover: a repo's pull requests">
+  <img src="docs/assets/screens/popover-issues.png" width="270" alt="Menu bar popover: a repo's issues">
 </p>
 <p align="center">
-  <img src="screenshots/settings-account.png" width="360" alt="Settings: account">
-   <img src="screenshots/settings-add-account.png" width="360" alt="Settings: account">
+  <img src="docs/assets/screens/main-pr.png" width="425" alt="Main window: a repo's pull requests with checks, reviewers, files and comments">
+  <img src="docs/assets/screens/main-issue.png" width="425" alt="Main window: a repo's issues with one open">
+</p>
+<p align="center">
+  <img src="docs/assets/screens/settings.png" width="560" alt="Settings window">
 </p>
 
 ## Features
@@ -24,7 +29,8 @@ GitHub (github.com and GitHub Enterprise Server) and GitLab (GitLab.com and GitL
 - **Accurate PR status**: Merged, Closed, Draft, Review requested, Changes requested, Approved or Review required — not just "Open".
 - **Live CI**: running checks show a spinner and update on their own until they finish.
 - **PR detail**: description (rendered Markdown), reviewers, checks, files changed, comments, a link to the PR — and submit a review (Approve / Request changes / Comment; GitLab has Approve / Comment).
-- **PR window**: pop any PR out of the menu into its own resizable window, with **inline file diffs** (large and generated files stay collapsed until you ask).
+- **Main window**: a three-column window like Mail: *For You* (Review Requested, Created by Me, Assigned to Me, Inbox) across every repo, your repos by account, and the full PR or issue, with **inline file diffs** (large and generated files stay collapsed until you ask). Open it from the popover or with ⌘0.
+- **Issues**: labels, assignees and comments, an "Assigned to me" filter, and replies from the issue screen.
 - **Create pull requests / merge requests**: pick source and target branch, title, and description — prefilled from the repo's PR or MR template.
 - **Notifications**: an inbox of review requests, mentions, assignments and more, an unread dot on the menu bar icon, per-repo unread counts, and macOS alerts for new ones (you choose which reasons). GitHub needs a classic token with the `notifications` or `repo` scope; on GitLab this is your To-Do List (`read_api` or `api` scope).
 - **Token check**: when you add an account, gitbar tells you what the token can do (read repos, review/open PRs, notifications) and how to fix what's missing.
@@ -66,14 +72,14 @@ make install
 
 ### 3. Connect your GitHub or GitLab account
 
-1. Click gitbar's menu bar icon → gear icon → **Manage this app…**
+1. Click gitbar's menu bar icon → gear icon → **Settings…** (⌘,)
 2. **Accounts → GitHub → Add Account**, choose **Cloud** (github.com) or **Self-hosted** (GitHub Enterprise Server — enter your server's address).
 3. Create a [personal access token](https://github.com/settings/tokens) and paste it in. A **classic** token with the `repo` scope covers everything, including notifications. gitbar shows what your token can and can't do right after you add it.
 
    **GitLab:** same steps under **Accounts → GitLab → Add Account** — **Cloud** (gitlab.com) or **Self-hosted** (your GitLab Self-Managed server's address). Create a [personal access token](https://gitlab.com/-/user_settings/personal_access_tokens) with the `api` scope (or `read_api` for read-only: browsing, no comments/approvals). Your GitLab To-Do List shows up as gitbar's notifications.
 4. Pick the repos to show — they appear in the menu bar popover.
 
-gitbar normally lives only in the menu bar. While its Settings window or a PR window is open it also shows in the Dock and ⌘-Tab, so you can bring those windows back from behind other apps.
+gitbar normally lives only in the menu bar. While its Settings window or main window is open it also shows in the Dock and ⌘-Tab, so you can bring those windows back from behind other apps.
 
 ### Update, remove, and other options
 
@@ -106,7 +112,8 @@ make clean    # remove build output and the generated project
 
 ## Roadmap
 
-- **More providers.** GitLab and Bitbucket, each as a self-contained module on the existing provider architecture.
+- **More providers.** Bitbucket, as a self-contained module on the existing provider architecture.
+- **Repo overview** in the main window.
 
 ## Author
 

@@ -1,0 +1,542 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>gitbar: GitHub and GitLab in your Mac's menu bar</title>
+<meta name="description" content="A native macOS menu bar app for GitHub and GitLab. Pin repos, see which ones need you, and review pull requests and issues without opening a browser.">
+<meta property="og:title" content="gitbar">
+<meta property="og:description" content="GitHub and GitLab, one click away in the macOS menu bar.">
+<meta property="og:image" content="assets/screens/main-review-requested.png">
+<link rel="icon" type="image/png" href="assets/favicon.png">
+<link rel="apple-touch-icon" href="assets/icon.png">
+<style>
+  :root {
+    --bg: #fbfbfd;
+    --bg-alt: #f2f2f6;
+    --card: #ffffff;
+    --text: #1d1d1f;
+    --muted: #5f5f66;
+    --line: rgba(0, 0, 0, 0.09);
+    --accent: #6b3fe8;
+    --accent-2: #5c6cff;
+    --blue: #0a6fd6;
+    --green: #1d8a4a;
+    --orange: #b45309;
+    --cyan: #0b7f91;
+    --code-bg: #ececf2;
+    --shot-shadow: drop-shadow(0 30px 40px rgba(40, 20, 90, 0.22)) drop-shadow(0 6px 12px rgba(0, 0, 0, 0.12));
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0c0c10;
+      --bg-alt: #131319;
+      --card: #1a1a21;
+      --text: #f5f5f7;
+      --muted: #a1a1aa;
+      --line: rgba(255, 255, 255, 0.09);
+      --accent: #a78bfa;
+      --accent-2: #8b9bff;
+      --blue: #4aa3ff;
+      --green: #32d74b;
+      --orange: #ffb340;
+      --cyan: #22d3ee;
+      --code-bg: #20202a;
+      --shot-shadow: drop-shadow(0 30px 50px rgba(0, 0, 0, 0.65)) drop-shadow(0 0 1px rgba(255, 255, 255, 0.25));
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 17px/1.55 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Inter, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    overflow-x: hidden;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, pre { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.88em; }
+  code { background: var(--code-bg); padding: 0.1em 0.4em; border-radius: 5px; }
+  img { max-width: 100%; height: auto; display: block; }
+  /* Screenshots are 3x renders of the design; shadows via filter keep their own rounded corners. */
+  .shot { filter: var(--shot-shadow); }
+
+  .wrap { max-width: 1160px; margin: 0 auto; padding: 0 24px; }
+
+  /* Nav */
+  nav {
+    position: sticky; top: 0; z-index: 10;
+    backdrop-filter: saturate(180%) blur(20px);
+    -webkit-backdrop-filter: saturate(180%) blur(20px);
+    background: color-mix(in srgb, var(--bg) 78%, transparent);
+    border-bottom: 1px solid var(--line);
+  }
+  nav .wrap { display: flex; align-items: center; justify-content: space-between; height: 56px; gap: 16px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 650; color: var(--text); font-size: 17px; }
+  .brand img { width: 28px; height: 28px; }
+  .brand:hover { text-decoration: none; }
+  nav .links { display: flex; gap: 24px; font-size: 14px; }
+  nav .links a { color: var(--muted); }
+  nav .links a:hover { color: var(--text); text-decoration: none; }
+
+  /* Buttons */
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px; min-height: 46px;
+    padding: 12px 22px; border-radius: 980px; font-weight: 600; font-size: 16px;
+    transition: transform .15s ease, box-shadow .15s ease;
+  }
+  .btn:hover { text-decoration: none; transform: translateY(-1px); }
+  .btn-primary {
+    color: #fff;
+    background: linear-gradient(135deg, #5c6cff, #6b3fe8 55%, #8a2fd6);
+    box-shadow: 0 8px 24px -8px rgba(107, 63, 232, 0.6);
+  }
+  .btn-ghost { color: var(--text); border: 1px solid var(--line); background: var(--card); }
+
+  .logo { display: inline-block; width: 22px; height: 22px; flex: none; background: currentColor; -webkit-mask: var(--src) center/contain no-repeat; mask: var(--src) center/contain no-repeat; }
+  .logo.github { --src: url(assets/logos/github.svg); }
+  .logo.gitlab { --src: url(assets/logos/gitlab.svg); color: #fc6d26; }
+  .logo.bitbucket { --src: url(assets/logos/bitbucket.svg); color: #2684ff; }
+  .logo.sm { width: 18px; height: 18px; }
+
+  /* Hero */
+  .hero { position: relative; padding: 80px 0 24px; text-align: center; }
+  .hero::before {
+    content: ""; position: absolute; left: 50%; top: -200px; width: 1400px; height: 1000px; transform: translateX(-50%); z-index: -1;
+    background:
+      radial-gradient(closest-side at 38% 45%, rgba(92, 108, 255, 0.26), transparent),
+      radial-gradient(closest-side at 64% 40%, rgba(138, 47, 214, 0.2), transparent);
+    pointer-events: none;
+  }
+  .hero .icon { width: 104px; height: 104px; margin: 0 auto 24px; filter: drop-shadow(0 16px 30px rgba(75, 59, 217, 0.35)); }
+  .eyebrow {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 13px; font-weight: 600; color: var(--muted);
+    border: 1px solid var(--line); background: var(--card);
+    padding: 5px 12px; border-radius: 980px; margin-bottom: 20px;
+  }
+  .eyebrow .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); }
+  h1 {
+    font-size: clamp(34px, 8vw, 72px); line-height: 1.04; letter-spacing: -0.035em;
+    margin: 0 auto 20px; max-width: 15ch; font-weight: 750;
+  }
+  h1 .grad {
+    background: linear-gradient(120deg, var(--accent-2), var(--accent) 50%, #c084fc);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  .lede { font-size: clamp(18px, 2.2vw, 21px); color: var(--muted); max-width: 660px; margin: 0 auto 32px; }
+  .cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .meta { margin-top: 18px; font-size: 13px; color: var(--muted); }
+
+  .stage { position: relative; margin: 72px auto 0; max-width: 1080px; }
+  .stage .window { width: 86%; }
+  .stage .pop { position: absolute; right: 0; top: -40px; width: 28%; }
+
+  .providers {
+    display: flex; justify-content: center; align-items: center; gap: 36px; flex-wrap: wrap;
+    padding: 48px 0 0; font-size: 14px;
+  }
+  .prov { display: flex; align-items: center; gap: 10px; font-weight: 600; color: var(--text); }
+  .prov small { font-weight: 500; color: var(--muted); }
+  .soon { opacity: .6; }
+  .tag { font-size: 11px; font-weight: 600; padding: 2px 7px; border-radius: 6px; background: var(--bg-alt); color: var(--muted); border: 1px solid var(--line); }
+
+  /* Sections */
+  section { padding: 104px 0; }
+  section.alt { background: var(--bg-alt); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+  .section-head { text-align: center; max-width: 700px; margin: 0 auto 56px; }
+  .kicker { font-size: 14px; font-weight: 650; color: var(--accent); letter-spacing: .02em; margin-bottom: 10px; }
+  h2 { font-size: clamp(30px, 4.5vw, 46px); line-height: 1.1; letter-spacing: -0.025em; margin: 0 0 16px; font-weight: 720; }
+  .section-head p { color: var(--muted); font-size: 19px; margin: 0; }
+
+  .status-row { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; margin-top: 28px; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 7px; font-size: 14px; font-weight: 600;
+    padding: 7px 14px; border-radius: 980px; background: var(--card); border: 1px solid var(--line);
+  }
+  .pill i { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+  .pill.blue { color: var(--blue); }
+  .pill.orange { color: var(--orange); }
+  .pill.cyan { color: var(--cyan); }
+  .pill.green { color: var(--green); }
+  .spin { width: 12px; height: 12px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Popover trio */
+  .trio { display: grid; grid-template-columns: repeat(3, 1fr); gap: 32px; align-items: start; }
+  .trio figure { margin: 0; }
+  .trio img { width: 100%; max-width: 340px; margin: 0 auto; }
+  figcaption { text-align: center; margin-top: 22px; }
+  figcaption b { display: block; font-size: 17px; margin-bottom: 4px; }
+  figcaption span { color: var(--muted); font-size: 15px; display: block; max-width: 320px; margin: 0 auto; }
+
+  /* Main window tabs */
+  .tabs { display: flex; justify-content: center; gap: 4px; margin: 0 auto 36px; padding: 4px; border-radius: 980px; background: var(--card); border: 1px solid var(--line); width: max-content; max-width: 100%; flex-wrap: wrap; }
+  .tabs button {
+    font: 600 14px -apple-system, BlinkMacSystemFont, system-ui, sans-serif; color: var(--muted);
+    background: transparent; border: 0; border-radius: 980px; padding: 10px 18px; min-height: 40px; cursor: pointer;
+  }
+  .tabs button[aria-selected="true"] { background: var(--accent); color: #fff; }
+  @media (prefers-color-scheme: dark) { .tabs button[aria-selected="true"] { color: #14141b; } }
+  .panel img { width: 100%; max-width: 1080px; margin: 0 auto; }
+  a.zoom { display: block; cursor: zoom-in; }
+  .hint { display: none; text-align: center; font-size: 13px; color: var(--muted); margin-top: 14px; }
+  .panel[hidden] { display: none; }
+  .panel p { text-align: center; color: var(--muted); max-width: 680px; margin: 32px auto 0; }
+
+  .cols { display: grid; grid-template-columns: repeat(3, 1fr); gap: 32px; margin-top: 64px; }
+  .cols h4 { margin: 0 0 6px; font-size: 17px; }
+  .cols p { margin: 0; color: var(--muted); font-size: 15px; }
+
+  /* Showcase row */
+  .showcase { display: grid; grid-template-columns: 1fr 1.35fr; gap: 64px; align-items: center; }
+  .showcase h3 { font-size: clamp(26px, 3.2vw, 34px); letter-spacing: -0.02em; line-height: 1.15; margin: 0 0 14px; }
+  .showcase p { color: var(--muted); margin: 0 0 18px; }
+  .checks { list-style: none; padding: 0; margin: 0; }
+  .checks li { position: relative; padding-left: 28px; margin: 9px 0; }
+  .checks li::before {
+    content: ""; position: absolute; left: 0; top: 5px; width: 17px; height: 17px; border-radius: 50%;
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+  }
+  .checks li::after {
+    content: ""; position: absolute; left: 5.5px; top: 9px; width: 5px; height: 8px;
+    border: solid var(--accent); border-width: 0 2px 2px 0; transform: rotate(45deg);
+  }
+
+  /* Feature grid */
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 26px; }
+  .card .ic {
+    width: 40px; height: 40px; border-radius: 11px; display: grid; place-items: center; margin-bottom: 16px;
+    background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent);
+  }
+  .card .ic svg { width: 22px; height: 22px; }
+  .card h4 { margin: 0 0 8px; font-size: 18px; letter-spacing: -0.01em; }
+  .card p { margin: 0; color: var(--muted); font-size: 15px; }
+
+  /* Install */
+  .install { display: grid; grid-template-columns: 1fr 1.2fr; gap: 56px; align-items: start; }
+  .install .why > p { color: var(--muted); }
+  .steps { list-style: none; padding: 0; margin: 24px 0 0; display: grid; gap: 16px; }
+  .steps li { display: flex; gap: 12px; align-items: flex-start; }
+  .steps b { display: block; }
+  .steps span { color: var(--muted); font-size: 15px; }
+  .steps .n {
+    flex: none; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center;
+    font-size: 13px; font-weight: 700; color: #fff; background: linear-gradient(135deg, #5c6cff, #8a2fd6);
+  }
+  .terminal { background: #15151c; color: #e6e6ef; border-radius: 14px; overflow: hidden; border: 1px solid rgba(255,255,255,.08); box-shadow: 0 30px 60px -20px rgba(0,0,0,.45); }
+  .terminal .bar { display: flex; gap: 7px; padding: 10px 14px; background: #1e1e27; border-bottom: 1px solid rgba(255,255,255,.06); align-items: center; }
+  .terminal .bar i { width: 12px; height: 12px; border-radius: 50%; }
+  .terminal .bar i:nth-child(1) { background: #ff5f57; }
+  .terminal .bar i:nth-child(2) { background: #febc2e; }
+  .terminal .bar i:nth-child(3) { background: #28c840; }
+  .terminal .bar span { margin-left: 8px; font-size: 12px; color: #8a8a99; flex-grow: 1; }
+  .terminal pre { margin: 0; padding: 20px 22px; overflow-x: auto; line-height: 1.75; }
+  .terminal .c { color: #8b8ba0; }
+  .terminal .p { color: #a78bfa; user-select: none; }
+  .copy { font: 600 12px -apple-system, system-ui, sans-serif; color: #d4d4e0; background: rgba(255,255,255,.1); border: 0; border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+  .copy:hover { background: rgba(255,255,255,.16); }
+  .install .note { font-size: 14px; color: var(--muted); margin-top: 16px; }
+
+  .final { text-align: center; }
+  .final img { width: 84px; margin: 0 auto 22px; }
+  footer { border-top: 1px solid var(--line); padding: 32px 0 48px; color: var(--muted); font-size: 14px; }
+  footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  footer a { color: var(--muted); }
+
+  /* Reveal on scroll (only when JS runs). Opacity only, since a transform would resample the screenshots. */
+  .js .reveal { opacity: 0; transition: opacity .8s ease; }
+  .js .reveal.in { opacity: 1; }
+  @media (prefers-reduced-motion: reduce) {
+    .js .reveal { opacity: 1; transition: none; }
+    .spin { animation: none; }
+    html { scroll-behavior: auto; }
+  }
+
+  @media (max-width: 920px) {
+    .stage .window { width: 100%; }
+    .stage .pop { position: static; width: 70%; max-width: 320px; margin: -12% 0 0 auto; }
+    .trio { grid-template-columns: repeat(2, 1fr); gap: 40px 24px; }
+    .trio figure:last-child { grid-column: 1 / -1; max-width: 50%; margin: 0 auto; }
+    .hint { display: block; }
+    .showcase, .install { grid-template-columns: 1fr; gap: 36px; }
+    .grid, .cols { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width: 640px) {
+    nav .links a:not(.gh) { display: none; }
+    .grid, .cols { grid-template-columns: 1fr; }
+    .trio { grid-template-columns: 1fr; gap: 56px; }
+    .trio figure:last-child { max-width: none; }
+    .stage { margin-top: 48px; }
+    .stage .pop { width: 62%; }
+    .providers { gap: 16px 28px; }
+    .section-head { margin-bottom: 40px; }
+    .section-head p { font-size: 17px; }
+    .tabs button { padding: 10px 14px; }
+    .terminal pre { font-size: 12px; padding: 16px; }
+    section { padding: 72px 0; }
+    .hero { padding-top: 56px; }
+    .wrap { padding: 0 16px; }
+  }
+</style>
+</head>
+<body>
+<script>document.documentElement.classList.add('js');</script>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="#"><img src="assets/icon.png" alt="">gitbar</a>
+    <div class="links">
+      <a href="#popover">Menu bar</a>
+      <a href="#window">Main window</a>
+      <a href="#install">Install</a>
+      <a class="gh" href="https://github.com/NavaneethVijay/gitbar">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <img class="icon" src="assets/icon.png" alt="gitbar app icon">
+    <div class="eyebrow"><span class="dot"></span>Free &amp; open source · macOS 15+</div>
+    <h1>Your pull requests, <span class="grad">one click away.</span></h1>
+    <p class="lede">gitbar lives in your Mac's menu bar and keeps an eye on your GitHub and GitLab repos. One click shows you what needs your attention. When it's time to dig in, a full window lets you review, comment and approve without opening a single browser tab.</p>
+    <div class="cta">
+      <a class="btn btn-primary" href="#install">Install from source</a>
+      <a class="btn btn-ghost" href="https://github.com/NavaneethVijay/gitbar"><span class="logo github sm"></span>View on GitHub</a>
+    </div>
+    <div class="meta">Free forever · Open source (MIT) · No tracking</div>
+
+    <div class="stage">
+      <img class="window shot" src="assets/screens/main-review-requested.png" width="3840" height="2280" alt="gitbar main window: Review Requested across all repos, with a pull request open beside the list">
+      <img class="pop shot" src="assets/screens/popover-prs.png" width="966" height="1704" alt="gitbar menu bar popover showing a repo's open pull requests">
+    </div>
+
+    <div class="providers">
+      <span class="prov"><span class="logo github"></span>GitHub <small>.com &amp; Enterprise Server</small></span>
+      <span class="prov"><span class="logo gitlab"></span>GitLab <small>.com &amp; Self-Managed</small></span>
+      <span class="prov soon"><span class="logo bitbucket"></span>Bitbucket <span class="tag">Soon</span></span>
+    </div>
+  </div>
+</header>
+
+<section id="popover">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <div class="kicker">The menu bar</div>
+      <h2>The quick glance.</h2>
+      <p>Click the icon and you'll see every repo you care about, with a clear status on each one. No dashboards to dig through.</p>
+      <div class="status-row">
+        <span class="pill blue"><i></i>Review requested</span>
+        <span class="pill cyan"><span class="spin"></span>Checks running</span>
+        <span class="pill orange"><i></i>Changes requested</span>
+        <span class="pill green"><i></i>Approved</span>
+      </div>
+    </div>
+    <div class="trio">
+      <figure class="reveal">
+        <img class="shot" src="assets/screens/popover-menu.png" width="1023" height="1302" loading="lazy" alt="Popover listing pinned repos with their status, gear menu open">
+        <figcaption><b>Pinned repos</b><span>Your favorite repos in one list, color coded by account, so you can tell work from personal at a glance.</span></figcaption>
+      </figure>
+      <figure class="reveal">
+        <img class="shot" src="assets/screens/popover-prs.png" width="966" height="1704" loading="lazy" alt="Popover showing a repo's pull requests with CI and review status">
+        <figcaption><b>Pull requests</b><span>See which PRs pass CI and which are waiting on you. Tick "Only mine" to focus on your own.</span></figcaption>
+      </figure>
+      <figure class="reveal">
+        <img class="shot" src="assets/screens/popover-issues.png" width="966" height="1704" loading="lazy" alt="Popover showing a repo's open issues with labels">
+        <figcaption><b>Issues</b><span>Labels, comments and assignees for every issue. "Assigned to me" shows just your share.</span></figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<section id="window" class="alt">
+  <div class="wrap">
+    <div class="section-head reveal">
+      <div class="kicker">The main window</div>
+      <h2>Plenty of room to review.</h2>
+      <p>When a quick glance isn't enough, open the main window. It works like Mail: pick a list on the left, a pull request in the middle, and read it all on the right.</p>
+    </div>
+
+    <div class="tabs reveal" role="tablist" aria-label="Main window screens">
+      <button role="tab" id="t-foryou" aria-controls="p-foryou" aria-selected="true">For You</button>
+      <button role="tab" id="t-pr" aria-controls="p-pr" aria-selected="false" tabindex="-1">Pull request</button>
+      <button role="tab" id="t-issue" aria-controls="p-issue" aria-selected="false" tabindex="-1">Issue</button>
+    </div>
+    <div class="panel reveal" id="p-foryou" role="tabpanel" aria-labelledby="t-foryou">
+      <a class="zoom" href="assets/screens/main-review-requested.png" aria-label="Open full-size screenshot"><img class="shot" src="assets/screens/main-review-requested.png" width="3840" height="2280" loading="lazy" alt="Review Requested: pull requests waiting on you from every repo and account"></a>
+      <p>"For You" pulls together everything waiting on you from all your repos and accounts, GitHub and GitLab together in one place.</p>
+    </div>
+    <div class="panel" id="p-pr" role="tabpanel" aria-labelledby="t-pr" hidden>
+      <a class="zoom" href="assets/screens/main-pr.png" aria-label="Open full-size screenshot"><img class="shot" src="assets/screens/main-pr.png" width="3840" height="2280" loading="lazy" alt="A repository's pull requests with one open: checks, reviewers, files changed and comments"></a>
+      <p>Read the description, check CI, see who has reviewed, browse the diff and leave your review, all on one screen.</p>
+    </div>
+    <div class="panel" id="p-issue" role="tabpanel" aria-labelledby="t-issue" hidden>
+      <a class="zoom" href="assets/screens/main-issue.png" aria-label="Open full-size screenshot"><img class="shot" src="assets/screens/main-issue.png" width="3840" height="2280" loading="lazy" alt="A repository's issues with one open: assignees, labels, description and comments"></a>
+      <p>Catch up on the whole conversation and reply right there.</p>
+    </div>
+
+    <p class="hint">Tap a screenshot to see it full size.</p>
+
+    <div class="cols">
+      <div class="reveal"><h4>Live CI</h4><p>Running checks update by themselves, so you know the moment a build passes.</p></div>
+      <div class="reveal"><h4>Status you can trust</h4><p>Draft, approved, changes requested or waiting on you. Much more useful than a plain "Open".</p></div>
+      <div class="reveal"><h4>Find anything fast</h4><p>Search by title or author, or type a number like <code>#482</code> to jump right to it.</p></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="section-head reveal">
+      <div class="kicker">And more</div>
+      <h2>The little things, done right.</h2>
+    </div>
+    <div class="grid">
+      <div class="card reveal">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg></div>
+        <h4>Notifications that matter</h4>
+        <p>Get a Mac notification when someone asks for your review or mentions you. You choose what's worth a ping.</p>
+      </div>
+      <div class="card reveal">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></div>
+        <h4>Open PRs and MRs</h4>
+        <p>Start a new pull request from the menu bar. Your repo's template fills in the description for you.</p>
+      </div>
+      <div class="card reveal">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg></div>
+        <h4>Easy on your rate limit</h4>
+        <p>gitbar refreshes quietly in the background and only downloads what changed, so it barely touches your API limits.</p>
+      </div>
+      <div class="card reveal">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6M15.5 7.5l3 3L22 7l-3-3"/></svg></div>
+        <h4>Token check</h4>
+        <p>Paste a token and gitbar tells you what it can and can't do, plus how to fix anything missing.</p>
+      </div>
+      <div class="card reveal">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg></div>
+        <h4>Private by design</h4>
+        <p>Your tokens stay in the macOS Keychain. No gitbar servers, no tracking, no accounts to create.</p>
+      </div>
+      <div class="card reveal">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor"/></svg></div>
+        <h4>Feels like macOS</h4>
+        <p>Built with Apple's own tools, so it looks right at home. Light and dark mode included.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="alt">
+  <div class="wrap showcase">
+    <div class="reveal">
+      <div class="kicker">Settings</div>
+      <h3>Set up in a couple of minutes.</h3>
+      <p>Add your GitHub or GitLab account with a personal access token, choose the repos you want to follow, and you're done. Works with self-hosted servers too.</p>
+      <ul class="checks">
+        <li>Use as many accounts as you like</li>
+        <li>Decide how often it checks for updates</li>
+        <li>Pick which notifications you want</li>
+      </ul>
+    </div>
+    <a class="zoom reveal" href="assets/screens/settings.png" aria-label="Open full-size screenshot"><img class="shot" src="assets/screens/settings.png" width="2589" height="1692" loading="lazy" alt="gitbar Settings window, General page"></a>
+  </div>
+</section>
+
+<section id="install">
+  <div class="wrap install">
+    <div class="why reveal">
+      <div class="kicker">Install</div>
+      <h2>Build it on your own Mac.</h2>
+      <p>gitbar is free and you install it from source. That means no security warnings when you open it, and you can read every line of code you're running.</p>
+      <ul class="steps">
+        <li><span class="n">1</span><div><b>Get the tools</b><span>macOS 15 or later, <a href="https://apps.apple.com/app/xcode/id497799835">Xcode</a> (open it once) and <a href="https://brew.sh">Homebrew</a>.</span></div></li>
+        <li><span class="n">2</span><div><b>Build and install</b><span>Run a few commands. It takes about five minutes, plus the Xcode download.</span></div></li>
+        <li><span class="n">3</span><div><b>Connect an account</b><span>Click the menu bar icon, then the gear, then Settings. Add your account and paste a personal access token.</span></div></li>
+      </ul>
+    </div>
+    <div class="reveal">
+      <div class="terminal">
+        <div class="bar"><i></i><i></i><i></i><span>Terminal</span><button class="copy" type="button" data-copy="brew install xcodegen
+git clone https://github.com/NavaneethVijay/gitbar.git
+cd gitbar
+make install">Copy</button></div>
+<pre><span class="c"># one-time: XcodeGen generates the Xcode project</span>
+<span class="p">$ </span>brew install xcodegen
+
+<span class="c"># build a Release copy into /Applications and open it</span>
+<span class="p">$ </span>git clone https://github.com/NavaneethVijay/gitbar.git
+<span class="p">$ </span>cd gitbar
+<span class="p">$ </span>make install
+
+<span class="c"># later: update to the latest version</span>
+<span class="p">$ </span>git pull &amp;&amp; make install</pre>
+      </div>
+      <p class="note">Need more detail? The <a href="https://github.com/NavaneethVijay/gitbar#install">README</a> has a full walkthrough, which token permissions to pick, and fixes for common hiccups. Updating keeps all your accounts and repos.</p>
+    </div>
+  </div>
+</section>
+
+<section class="final alt">
+  <div class="wrap reveal">
+    <img src="assets/icon.png" alt="">
+    <h2>Spend less time hunting for pull requests.</h2>
+    <p class="lede">Free, open source, and made for the Mac.</p>
+    <div class="cta">
+      <a class="btn btn-primary" href="#install">Install gitbar</a>
+      <a class="btn btn-ghost" href="https://github.com/NavaneethVijay/gitbar"><span class="logo github sm"></span>Star on GitHub</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span>© 2026 <a href="https://github.com/NavaneethVijay">NavaneethVijay</a> · MIT License</span>
+    <span><a href="https://github.com/NavaneethVijay/gitbar">Source</a> · <a href="https://github.com/NavaneethVijay/gitbar/issues">Issues</a> · <a href="https://github.com/NavaneethVijay/gitbar/blob/main/NOTICE.md">Notices</a></span>
+  </div>
+</footer>
+
+<script>
+  // Fade sections in as they scroll into view.
+  if ('IntersectionObserver' in window) {
+    const io = new IntersectionObserver((entries) => {
+      for (const e of entries) if (e.isIntersecting) { e.target.classList.add('in'); io.unobserve(e.target); }
+    }, { threshold: 0.1 });
+    document.querySelectorAll('.reveal').forEach((el) => io.observe(el));
+  } else {
+    document.querySelectorAll('.reveal').forEach((el) => el.classList.add('in'));
+  }
+
+  // Main window screen tabs (arrow keys move between them).
+  const tabs = [...document.querySelectorAll('[role="tab"]')];
+  function select(tab) {
+    for (const t of tabs) {
+      const on = t === tab;
+      t.setAttribute('aria-selected', on);
+      t.tabIndex = on ? 0 : -1;
+      const p = document.getElementById(t.getAttribute('aria-controls'));
+      p.hidden = !on;
+      if (on) p.classList.add('in');
+    }
+  }
+  tabs.forEach((t, i) => {
+    t.addEventListener('click', () => select(t));
+    t.addEventListener('keydown', (e) => {
+      const d = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+      if (d) { const n = tabs[(i + d + tabs.length) % tabs.length]; select(n); n.focus(); }
+    });
+  });
+
+  document.querySelectorAll('.copy').forEach((b) => b.addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(b.dataset.copy); b.textContent = 'Copied'; }
+    catch { b.textContent = 'Select & copy'; }
+    setTimeout(() => (b.textContent = 'Copy'), 1600);
+  }));
+</script>
+</body>
+</html>
