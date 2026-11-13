@@ -30,6 +30,8 @@ struct PRCheck: Identifiable, Equatable {
     let status: CheckRunStatus
     /// The CI run page; no "Details" link when `nil`.
     let detailsURL: URL?
+    /// The provider's explanation (shown as the row's tooltip).
+    var summary: String? = nil
 }
 
 struct PRReviewer: Identifiable, Equatable {

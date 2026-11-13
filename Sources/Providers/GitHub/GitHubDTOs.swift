@@ -60,10 +60,28 @@ struct GitHubCombinedStatus: Decodable {
     /// "success" / "failure" / "error" / "pending" (also when there are none).
     let state: String
     let totalCount: Int
+    /// The latest status per context; optional so a body cached before this
+    /// field was read still decodes.
+    let statuses: [GitHubStatusContext]?
 
     enum CodingKeys: String, CodingKey {
-        case state
+        case state, statuses
         case totalCount = "total_count"
+    }
+}
+
+/// One legacy commit status (third-party CI, visual review, deploy previews).
+struct GitHubStatusContext: Decodable {
+    let context: String
+    let state: String       // "success" / "pending" / "failure" / "error"
+    let description: String?
+    /// A string, not `URL`: GitHub sends "" when there's no link, which
+    /// `URL` refuses to decode.
+    let targetURL: String?
+
+    enum CodingKeys: String, CodingKey {
+        case context, state, description
+        case targetURL = "target_url"
     }
 }
 

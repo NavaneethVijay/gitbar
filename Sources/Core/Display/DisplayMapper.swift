@@ -110,6 +110,7 @@ enum DisplayMapper {
         case .passed: return ("Checks passed", RepoActivityState.idle.color)
         case .failing: return ("Checks failing", Palette.danger)
         case .running: return ("Checks running", RepoActivityState.busy.color)
+        case .pending: return ("Checks pending", Palette.attention)
         case .none: return ("No checks", Palette.neutral)
         case .other(let state): return ("Checks \(state)", Palette.neutral)
         }
@@ -117,7 +118,7 @@ enum DisplayMapper {
 
     static func check(_ run: CheckRun) -> PRCheck {
         PRCheck(id: run.name + "|" + (run.detailsURL?.absoluteString ?? ""),
-                name: run.name, status: run.status, detailsURL: run.detailsURL)
+                name: run.name, status: run.status, detailsURL: run.detailsURL, summary: run.summary)
     }
 
     static func comment(_ comment: Comment) -> PRComment {

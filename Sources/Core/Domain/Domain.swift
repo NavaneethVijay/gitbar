@@ -144,6 +144,11 @@ enum CheckSummary: Equatable, Sendable {
     case passed
     case failing
     case running
+    /// Not finished, but nothing is running: only waiting on something
+    /// outside CI — a commit status awaiting a person (a visual-review
+    /// baseline, an approval gate) or a required check that never reported.
+    /// Drawn static, never with a spinner, and not polled.
+    case pending
     /// The head commit has no CI configured at all.
     case none
     /// A state the provider reported that doesn't fit the above.
@@ -157,6 +162,7 @@ extension CheckSummary {
         if runs.isEmpty { return .none }
         if runs.contains(.running) { return .running }
         if runs.contains(.failed) { return .failing }
+        if runs.contains(.pending) { return .pending }
         return .passed
     }
 }
@@ -173,6 +179,9 @@ enum CheckRunStatus: Equatable, Sendable {
     case failed
     /// Queued or in progress — not finished yet.
     case running
+    /// Reported but waiting on a person, not on CI (a pending commit status,
+    /// a deployment awaiting approval). Static — no spinner, no polling.
+    case pending
     case skipped
     /// Finished without a pass/fail verdict (e.g. GitHub's "neutral").
     case neutral
@@ -183,6 +192,9 @@ struct CheckRun: Equatable, Sendable {
     let name: String
     let status: CheckRunStatus
     let detailsURL: URL?
+    /// The provider's one-line explanation, when it gives one (a commit
+    /// status's description, e.g. "36 changes must be accepted as baselines").
+    var summary: String? = nil
 
     var isRunning: Bool { status == .running }
 }

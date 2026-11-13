@@ -490,6 +490,9 @@ private struct RepoSummaryStrip: View {
         case .running:
             SummaryChip(systemImage: nil, text: branch, tint: RepoActivityState.busy.color, isRunning: true)
                 .help("CI on \(branch) is running")
+        case .pending:
+            SummaryChip(systemImage: "clock", text: branch, tint: Palette.attention)
+                .help("CI on \(branch) is waiting on a pending status")
         case .some(.none), .some(.other), nil:
             SummaryChip(systemImage: "arrow.triangle.branch", text: branch)
                 .help("Default branch")

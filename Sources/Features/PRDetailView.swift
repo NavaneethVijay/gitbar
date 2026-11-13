@@ -757,9 +757,14 @@ private struct CheckRow: View {
             Text(check.name)
                 .font(.system(size: type.row))
                 .foregroundStyle(Palette.textStrong)
+                .help(check.summary ?? check.name)
             Spacer(minLength: 0)
             if check.status == .running {
                 Text("Running…")
+                    .font(.system(size: type.meta))
+                    .foregroundStyle(Palette.textTertiary)
+            } else if check.status == .pending {
+                Text("Pending")
                     .font(.system(size: type.meta))
                     .foregroundStyle(Palette.textTertiary)
             } else if check.status == .skipped {
@@ -792,6 +797,10 @@ private struct CheckRow: View {
             Image(systemName: "xmark.circle.fill")
                 .font(.system(size: 13))
                 .foregroundStyle(Palette.danger)
+        case .pending:
+            Image(systemName: "clock")
+                .font(.system(size: 13))
+                .foregroundStyle(Palette.attention)
         case .skipped:
             Image(systemName: "minus.circle")
                 .font(.system(size: 13))

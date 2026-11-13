@@ -237,7 +237,9 @@ actor GitHubClient: ProviderClient {
                 struct Commits: Decodable { let nodes: [CommitNode] }
                 struct CommitNode: Decodable { let commit: Commit }
                 struct Commit: Decodable { let statusCheckRollup: Rollup? }
-                struct Rollup: Decodable { let state: String }
+                struct Rollup: Decodable { let state: String; let contexts: Contexts? }
+                struct Contexts: Decodable { let checkRunCountsByState: [StateCount]? }
+                struct StateCount: Decodable { let state: String; let count: Int }
                 let number: Int
                 let reviewDecision: String?
                 let commits: Commits
@@ -245,23 +247,35 @@ actor GitHubClient: ProviderClient {
             let data: DataField?
         }
         let fields = numbers.map {
-            "p\($0): pullRequest(number: \($0)) { number reviewDecision commits(last: 1) { nodes { commit { statusCheckRollup { state } } } } }"
+            "p\($0): pullRequest(number: \($0)) { number reviewDecision commits(last: 1) { nodes { commit { statusCheckRollup { state contexts(first: 0) { checkRunCountsByState { state count } } } } } } }"
         }
         let query = "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { \(fields.joined(separator: " ")) } }"
         let response: Response = try await graphQL(query, variables: ["owner": owner, "name": name])
 
         var result: [Int: PullRequestStatusSummary] = [:]
         for case let node? in (response.data?.repository ?? [:]).values {
+            let rollup = node.commits.nodes.first?.commit.statusCheckRollup
             result[node.number] = PullRequestStatusSummary(
-                checks: GitHubMapping.checkSummary(rollupState: node.commits.nodes.first?.commit.statusCheckRollup?.state),
+                checks: GitHubMapping.checkSummary(
+                    rollupState: rollup?.state,
+                    activeCheckRuns: (rollup?.contexts?.checkRunCountsByState ?? [])
+                        .filter { GitHubMapping.activeCheckRunStates.contains($0.state) }
+                        .reduce(0) { $0 + $1.count }),
                 review: GitHubMapping.reviewStatus(node.reviewDecision))
         }
         return result
     }
 
+    /// Check runs plus legacy commit statuses (third-party CI, visual
+    /// review, deploy previews) — the same list github.com shows. Both are
+    /// ETag-cacheable GETs; the statuses are best-effort.
     func checks(repo: String, pullRequest: PullRequest) async throws -> [CheckRun] {
-        let list: GitHubCheckRunList = try await get("/repos/\(repo)/commits/\(pullRequest.headSHA)/check-runs").value
-        return list.checkRuns.map(\.domain)
+        let sha = pullRequest.headSHA
+        async let statusTask: (value: GitHubCombinedStatus, hasNextPage: Bool)? =
+            try? get("/repos/\(repo)/commits/\(sha)/status?per_page=100")
+        let list: GitHubCheckRunList = try await get("/repos/\(repo)/commits/\(sha)/check-runs?per_page=100").value
+        let statuses = await statusTask?.value.statuses ?? []
+        return list.checkRuns.map(\.domain) + statuses.map(\.domain)
     }
 
     /// A PR's conversation comments are issue comments on GitHub.

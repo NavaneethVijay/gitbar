@@ -44,6 +44,14 @@ extension GitHubCheckRun {
     }
 }
 
+extension GitHubStatusContext {
+    var domain: CheckRun {
+        CheckRun(name: context, status: GitHubMapping.statusContextStatus(state),
+                 detailsURL: targetURL.flatMap { $0.isEmpty ? nil : URL(string: $0) },
+                 summary: description.flatMap { $0.isEmpty ? nil : $0 })
+    }
+}
+
 extension GitHubComment {
     var domain: Comment {
         Comment(author: user.login, body: body, createdAt: createdAt)
@@ -198,7 +206,10 @@ enum GitHubMapping {
 
     /// A check run's `status` ("queued"/"in_progress"/"completed"/"waiting"/
     /// "requested"/"pending") and, once completed, its `conclusion`.
+    /// "waiting" is a job held for a deployment approval — nothing runs until
+    /// someone approves, so it isn't drawn as running.
     static func checkRunStatus(status: String, conclusion: String?) -> CheckRunStatus {
+        if status == "waiting" { return .pending }
         guard status == "completed" else { return .running }
         switch conclusion {
         case "success": return .passed
@@ -209,11 +220,16 @@ enum GitHubMapping {
     }
 
     /// `statusCheckRollup.state` — covers check runs and legacy statuses.
-    static func checkSummary(rollupState: String?) -> CheckSummary {
+    /// The rollup says PENDING for anything unfinished, including a commit
+    /// status that waits on a person forever (e.g. "changes must be accepted
+    /// as baselines") after every Actions job — skipped ones included — is
+    /// done. So it only counts as running while a check run actually is
+    /// (`activeCheckRuns`, from `checkRunCountsByState`).
+    static func checkSummary(rollupState: String?, activeCheckRuns: Int) -> CheckSummary {
         switch rollupState {
         case "SUCCESS": return .passed
         case "FAILURE", "ERROR": return .failing
-        case "PENDING", "EXPECTED": return .running
+        case "PENDING", "EXPECTED": return activeCheckRuns > 0 ? .running : .pending
         case nil: return .none
         case let other?: return .other(other.lowercased())
         }
@@ -227,11 +243,25 @@ enum GitHubMapping {
         if let combined, combined.totalCount > 0 {
             switch combined.state {
             case "success": statuses.append(.passed)
-            case "pending": statuses.append(.running)
+            case "pending": statuses.append(.pending)
             default: statuses.append(.failed)
             }
         }
         return .combining(statuses)
+    }
+
+    /// `checkRunCountsByState` states that mean a job is queued or running.
+    static let activeCheckRunStates: Set<String> = ["IN_PROGRESS", "QUEUED", "PENDING", "REQUESTED"]
+
+    /// A legacy commit status (`/commits/{sha}/status`) as a check row. A
+    /// pending status can't be told apart from one waiting on a person, so
+    /// it's drawn as pending, not running.
+    static func statusContextStatus(_ state: String) -> CheckRunStatus {
+        switch state {
+        case "success": return .passed
+        case "pending": return .pending
+        default: return .failed  // failure, error
+        }
     }
 
     static func reviewEvent(_ decision: ReviewDecision) -> String {
