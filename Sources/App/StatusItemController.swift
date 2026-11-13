@@ -41,6 +41,10 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
                 }
             }
         }
+        // `-debugOpenSettings YES` opens the Settings window at launch.
+        if UserDefaults.standard.bool(forKey: "debugOpenSettings") {
+            settings.show()
+        }
         #endif
         Task {
             // Accounts added before token checks existed get checked once.

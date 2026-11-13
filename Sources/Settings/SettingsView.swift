@@ -190,15 +190,23 @@ struct ProviderLogoView: View {
 /// loaded — e.g. a private self-hosted GitLab, which serves uploaded avatars
 /// only to signed-in browser sessions (it refuses access tokens on
 /// `/uploads`, and its API has no avatar-bytes route; verified on 19.5).
+///
+/// Loaded through the shared session image cache rather than `AsyncImage`:
+/// sidebar rows are rebuilt on selection and account changes, and each
+/// rebuild cancelled `AsyncImage`'s load, which then stuck on its failure
+/// phase (initials) instead of retrying. The cache fetches once per URL and
+/// every row and the account header reuse it.
 private struct Avatar: View {
     let account: Account
     let size: CGFloat
 
+    private var images: MarkdownImageCache { .shared }
+
     var body: some View {
-        AsyncImage(url: account.avatarURL) { phase in
-            if let image = phase.image {
-                image.resizable().scaledToFill()
-            } else if case .empty = phase, account.avatarURL != nil {
+        Group {
+            if let url = account.avatarURL, let image = images.image(for: url) {
+                Image(nsImage: image).resizable().scaledToFill()
+            } else if let url = account.avatarURL, !images.hasFailed(url) {
                 Circle().fill(.quaternary)
             } else {
                 initials
@@ -206,6 +214,9 @@ private struct Avatar: View {
         }
         .frame(width: size, height: size)
         .clipShape(Circle())
+        .task(id: account.avatarURL) {
+            if let url = account.avatarURL { images.load(url) }
+        }
     }
 
     private var initials: some View {
