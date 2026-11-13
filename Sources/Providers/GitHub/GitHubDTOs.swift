@@ -178,6 +178,72 @@ struct GitHubPullRequestFile: Decodable {
     /// Unified-diff hunks for this file. GitHub leaves it out for binary
     /// files and for diffs too large to show.
     let patch: String?
+    let previousFilename: String?
+
+    enum CodingKeys: String, CodingKey {
+        case filename, status, additions, deletions, patch
+        case previousFilename = "previous_filename"
+    }
+}
+
+/// A GraphQL variable value.
+enum GraphQLValue: Encodable, Sendable {
+    case string(String)
+    case int(Int)
+    case null
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .string(let value): try container.encode(value)
+        case .int(let value): try container.encode(value)
+        case .null: try container.encodeNil()
+        }
+    }
+}
+
+struct GitHubGQLRequest: Encodable {
+    let query: String
+    let variables: [String: GraphQLValue]
+}
+
+/// GraphQL's envelope: `data`, and `errors` when it refused (with a 200).
+struct GitHubGQLResponse<T: Decodable>: Decodable {
+    struct Failure: Decodable { let message: String }
+    let data: T?
+    let errors: [Failure]?
+}
+
+struct GitHubGQLNodes<Node: Decodable>: Decodable { let nodes: [Node] }
+struct GitHubGQLID: Decodable { let id: String }
+
+/// `pullRequest { reviews(states: PENDING) reviewThreads { … } }`.
+struct GitHubGQLReviewPullRequest: Decodable {
+    let reviews: GitHubGQLNodes<GitHubGQLID>
+    let reviewThreads: GitHubGQLNodes<Thread>
+
+    struct Thread: Decodable {
+        let id: String
+        let isResolved: Bool
+        let viewerCanResolve: Bool?
+        let viewerCanUnresolve: Bool?
+        /// "LEFT" (old) / "RIGHT" (new).
+        let diffSide: String?
+        /// `nil` once outdated (or for a file-level comment).
+        let line: Int?
+        let path: String
+        let comments: GitHubGQLNodes<Comment>
+    }
+
+    struct Comment: Decodable {
+        let id: String
+        let body: String
+        let createdAt: Date
+        /// "PENDING" (in your unsubmitted review) / "SUBMITTED".
+        let state: String?
+        let author: Author?
+        struct Author: Decodable { let login: String }
+    }
 }
 
 struct GitHubCheckRunList: Decodable {

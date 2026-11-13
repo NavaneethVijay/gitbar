@@ -273,7 +273,7 @@ struct CreatePullRequestView: View {
 }
 
 /// A searchable branch list — repos can have hundreds, too many for a menu.
-private struct BranchPicker: View {
+struct BranchPicker: View {
     let branches: [String]
     @Binding var selection: String?
     let placeholder: String

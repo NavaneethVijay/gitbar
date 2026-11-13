@@ -67,6 +67,33 @@ enum UnifiedDiff {
         return lines
     }
 
+    /// Finds the drawn line an inline comment belongs to, by its line
+    /// numbers: an added/unchanged line by its new number, a removed line by
+    /// its old one (falling back to an unchanged line with that old number —
+    /// a comment made on the left side of a split view).
+    struct LineIndex: Sendable {
+        private var byNew: [Int: Int] = [:]
+        private var byOldRemoved: [Int: Int] = [:]
+        private var byOld: [Int: Int] = [:]
+
+        init(_ lines: [Line]) {
+            for line in lines {
+                if let new = line.newNumber, byNew[new] == nil { byNew[new] = line.id }
+                if let old = line.oldNumber {
+                    if line.kind == .removed, byOldRemoved[old] == nil { byOldRemoved[old] = line.id }
+                    if byOld[old] == nil { byOld[old] = line.id }
+                }
+            }
+        }
+
+        /// The line's `id`, or `nil` when it isn't in this diff.
+        func lineID(oldLine: Int?, newLine: Int?) -> Int? {
+            if let newLine { return byNew[newLine] }
+            if let oldLine { return byOldRemoved[oldLine] ?? byOld[oldLine] }
+            return nil
+        }
+    }
+
     /// `@@ -12,7 +14,9 @@` → (12, 14).
     private static func hunkStarts(_ header: String) -> (Int, Int)? {
         let parts = header.split(separator: " ")

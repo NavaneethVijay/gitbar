@@ -25,7 +25,8 @@ extension GitHubLabel {
 extension GitHubPullRequestFile {
     var domain: PullRequestFileChange {
         PullRequestFileChange(filename: filename, status: GitHubMapping.fileStatus(status),
-                              additions: additions, deletions: deletions, patch: patch)
+                              additions: additions, deletions: deletions, patch: patch,
+                              previousFilename: previousFilename)
     }
 }
 
@@ -55,6 +56,26 @@ extension GitHubStatusContext {
 extension GitHubComment {
     var domain: Comment {
         Comment(author: user.login, body: body, createdAt: createdAt)
+    }
+}
+
+extension GitHubMapping {
+    static func codeReview(_ pr: GitHubGQLReviewPullRequest) -> CodeReview {
+        let threads = pr.reviewThreads.nodes.map { thread -> ReviewThread in
+            let anchor = thread.line.map { line in
+                thread.diffSide == "LEFT" ? DiffAnchor(path: thread.path, oldLine: line, newLine: nil)
+                                          : DiffAnchor(path: thread.path, oldLine: nil, newLine: line)
+            }
+            let notes = thread.comments.nodes.map {
+                ReviewNote(id: $0.id, author: $0.author?.login ?? "ghost", body: $0.body,
+                           createdAt: $0.createdAt, isPending: $0.state == "PENDING")
+            }
+            return ReviewThread(id: thread.id, path: thread.path, anchor: anchor, notes: notes,
+                                isResolved: thread.isResolved,
+                                canResolve: thread.isResolved ? thread.viewerCanUnresolve == true
+                                                              : thread.viewerCanResolve == true)
+        }
+        return CodeReview(threads: threads, hasPendingReview: !pr.reviews.nodes.isEmpty)
     }
 }
 

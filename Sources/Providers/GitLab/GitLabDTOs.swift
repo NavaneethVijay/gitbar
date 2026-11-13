@@ -102,9 +102,12 @@ struct GitLabMergeRequest: Decodable {
     let createdAt: Date
     let webURL: URL?
     let labels: [GitLabLabel]?
+    /// Single-MR responses only — the commits a diff position is pinned to.
+    let diffRefs: GitLabDiffRefs?
 
     enum CodingKeys: String, CodingKey {
         case iid, title, author, state, draft, reviewers, sha, description, labels
+        case diffRefs = "diff_refs"
         case workInProgress = "work_in_progress"
         case sourceBranch = "source_branch"
         case targetBranch = "target_branch"
@@ -171,11 +174,70 @@ struct GitLabNote: Decodable {
     /// nil for a top-level comment, "DiscussionNote" for a thread reply,
     /// "DiffNote" for an inline code comment.
     let type: String?
+    /// Where a `DiffNote` sits in the diff.
+    var position: GitLabPosition? = nil
+    var resolved: Bool? = nil
+    var resolvable: Bool? = nil
 
     enum CodingKeys: String, CodingKey {
-        case id, body, author, system, type
+        case id, body, author, system, type, position, resolved, resolvable
         case createdAt = "created_at"
     }
+}
+
+struct GitLabDiffRefs: Decodable {
+    let baseSHA: String
+    let startSHA: String
+    let headSHA: String
+
+    enum CodingKeys: String, CodingKey {
+        case baseSHA = "base_sha"
+        case startSHA = "start_sha"
+        case headSHA = "head_sha"
+    }
+}
+
+/// A diff note's position; also the shape a new one is posted with.
+struct GitLabPosition: Codable {
+    var positionType: String? = "text"
+    var baseSHA: String? = nil
+    var startSHA: String? = nil
+    var headSHA: String? = nil
+    let oldPath: String?
+    let newPath: String?
+    let oldLine: Int?
+    let newLine: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case positionType = "position_type"
+        case baseSHA = "base_sha"
+        case startSHA = "start_sha"
+        case headSHA = "head_sha"
+        case oldPath = "old_path"
+        case newPath = "new_path"
+        case oldLine = "old_line"
+        case newLine = "new_line"
+    }
+}
+
+/// A note in your unsubmitted review (`/draft_notes`) — a new diff thread,
+/// or a reply to an existing discussion when `discussionID` is set.
+struct GitLabDraftNote: Decodable {
+    let id: Int
+    let note: String?
+    let discussionID: String?
+    let position: GitLabPosition?
+
+    enum CodingKeys: String, CodingKey {
+        case id, note, position
+        case discussionID = "discussion_id"
+    }
+}
+
+/// One thread (`/discussions`): a top-level note and its replies.
+struct GitLabDiscussion: Decodable {
+    let id: String
+    let notes: [GitLabNote]
 }
 
 struct GitLabApprovals: Decodable {

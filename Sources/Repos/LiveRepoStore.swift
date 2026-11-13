@@ -766,10 +766,14 @@ final class LiveRepoStore {
             loadingFilesFor.insert(key)
             Task {
                 defer { loadingFilesFor.remove(key) }
-                guard let files = try? await withRateLimitBackoff({
-                    try await client.files(repo: path, number: prID)
-                }) else { return }
-                updatePullRequest(repoID: repoID, prID: prID) { $0.files = files.map(DisplayMapper.fileChange) }
+                // Threads ride along, best-effort: the diff still shows without them.
+                async let reviewResult = try? withRateLimitBackoff { try await client.codeReview(repo: path, number: prID) }
+                let files = try? await withRateLimitBackoff { try await client.files(repo: path, number: prID) }
+                let review = await reviewResult
+                updatePullRequest(repoID: repoID, prID: prID) {
+                    if let files { $0.files = files.map(DisplayMapper.fileChange) }
+                    if let review { $0.apply(review) }
+                }
             }
         }
     }
@@ -824,12 +828,15 @@ final class LiveRepoStore {
         async let commentsResult = try? withRateLimitBackoff { try await client.comments(repo: path, number: prID) }
         async let reviewersResult = try? withRateLimitBackoff { try await client.reviewers(repo: path, pullRequest: fresh) }
         async let filesResult = try? withRateLimitBackoff { try await client.files(repo: path, number: prID) }
+        async let reviewResult = try? withRateLimitBackoff { try await client.codeReview(repo: path, number: prID) }
         let (checks, comments, reviewers, files) = await (checksResult, commentsResult, reviewersResult, filesResult)
+        let review = await reviewResult
 
         if let checks { mapped.checks = checks.map(DisplayMapper.check) }
         if let comments { mapped.comments = comments.map(DisplayMapper.comment) }
         if let reviewers { mapped.reviewers = reviewers.map(DisplayMapper.reviewer) }
         if let files { mapped.files = files.map(DisplayMapper.fileChange) }
+        if let review { mapped.apply(review) }
 
         updatePullRequest(repoID: repoID, prID: prID) { $0 = mapped }
     }
@@ -849,7 +856,9 @@ final class LiveRepoStore {
         updatePullRequest(repoID: repoID, prID: prID) { $0.reviewers = reviewers.map(DisplayMapper.reviewer) }
     }
 
-    /// On failure the provider's own message lands in `reviewSubmitError`.
+    /// Finishes the review — your pending one with all its inline comments
+    /// when there is one. On failure the provider's own message lands in
+    /// `reviewSubmitError` (and the pending review stays on the provider).
     func submitReview(repoID: RepoRef, prID: Int, decision: ReviewDecision, body: String) async {
         let key = PRRef(repo: repoID, number: prID)
         guard isSubmittingReview[key] != true, let (_, client) = resolve(repoID) else { return }
@@ -865,10 +874,23 @@ final class LiveRepoStore {
                 try await client.submitReview(repo: path, number: prID, decision: decision,
                                               body: trimmed.isEmpty ? nil : trimmed)
             }
-            await refreshReviewers(repoID: repoID, prID: prID)
+            async let reviewers: Void = refreshReviewers(repoID: repoID, prID: prID)
+            async let threads: Void = refreshCodeReview(repoID: repoID, prID: prID)
+            async let comments: Void = refreshComments(repoID: repoID, prID: prID)
+            _ = await (reviewers, threads, comments)
         } catch {
             reviewSubmitError[key] = Self.message(for: error, fallback: "Couldn't submit review.")
         }
+    }
+
+    /// The conversation — a review's summary can land there (GitLab).
+    private func refreshComments(repoID: RepoRef, prID: Int) async {
+        guard let (_, client) = resolve(repoID) else { return }
+        let path = repoID.path
+        guard let comments = try? await withRateLimitBackoff({
+            try await client.comments(repo: path, number: prID)
+        }) else { return }
+        updatePullRequest(repoID: repoID, prID: prID) { $0.comments = comments.map(DisplayMapper.comment) }
     }
 
     /// Shares the review's in-flight/error state — it's the same composer.
@@ -890,6 +912,122 @@ final class LiveRepoStore {
         } catch {
             reviewSubmitError[key] = Self.message(for: error, fallback: "Couldn't post comment.")
         }
+    }
+
+    // MARK: - Inline review comments
+
+    /// Re-reads threads and the pending review after every write, so what's
+    /// shown is always what the provider has (shared with the web).
+    func refreshCodeReview(repoID: RepoRef, prID: Int) async {
+        guard let (_, client) = resolve(repoID) else { return }
+        let path = repoID.path
+        guard let review = try? await withRateLimitBackoff({
+            try await client.codeReview(repo: path, number: prID)
+        }) else { return }
+        updatePullRequest(repoID: repoID, prID: prID) { $0.apply(review) }
+    }
+
+    /// Runs one review write, then re-reads the review state. Throws the
+    /// provider's message for the caller to show next to its text.
+    private func reviewWrite(repoID: RepoRef, prID: Int,
+                             _ write: @Sendable (any ProviderClient, String) async throws -> Void) async throws {
+        guard let (_, client) = resolve(repoID) else { throw ProviderError.accountUnavailable }
+        let path = repoID.path
+        do {
+            try await withRateLimitBackoff { try await write(client, path) }
+        } catch {
+            // A failed write may still mean the state moved (finished on the web).
+            await refreshCodeReview(repoID: repoID, prID: prID)
+            throw error
+        }
+        await refreshCodeReview(repoID: repoID, prID: prID)
+    }
+
+    /// `pending`: "Start a review" / "Add review comment"; else "Add single comment".
+    func addReviewComment(repoID: RepoRef, prID: Int, anchor: DiffAnchor, body: String, pending: Bool) async throws {
+        let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              let source = detailPullRequests[repoID]?.first(where: { $0.id == prID })?.source else { return }
+        let comment = NewReviewComment(anchor: anchor, body: trimmed)
+        try await reviewWrite(repoID: repoID, prID: prID) { client, path in
+            try await client.addReviewComment(repo: path, pullRequest: source, comment: comment, pending: pending)
+        }
+    }
+
+    func updatePendingComment(repoID: RepoRef, prID: Int, noteID: String, body: String) async throws {
+        let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        try await reviewWrite(repoID: repoID, prID: prID) { client, path in
+            try await client.updatePendingComment(repo: path, number: prID, noteID: noteID, body: trimmed)
+        }
+    }
+
+    func deletePendingComment(repoID: RepoRef, prID: Int, noteID: String) async throws {
+        try await reviewWrite(repoID: repoID, prID: prID) { client, path in
+            try await client.deletePendingComment(repo: path, number: prID, noteID: noteID)
+        }
+    }
+
+    func discardPendingReview(repoID: RepoRef, prID: Int) async throws {
+        try await reviewWrite(repoID: repoID, prID: prID) { client, path in
+            try await client.discardPendingReview(repo: path, number: prID)
+        }
+    }
+
+    func replyToReviewThread(repoID: RepoRef, prID: Int, threadID: String, body: String) async throws {
+        let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        try await reviewWrite(repoID: repoID, prID: prID) { client, path in
+            try await client.replyToReviewThread(repo: path, number: prID, threadID: threadID, body: trimmed)
+        }
+    }
+
+    func setReviewThreadResolved(repoID: RepoRef, prID: Int, threadID: String, resolved: Bool) async throws {
+        try await reviewWrite(repoID: repoID, prID: prID) { client, path in
+            try await client.setReviewThreadResolved(repo: path, number: prID, threadID: threadID, resolved: resolved)
+        }
+    }
+
+    // MARK: - Editing a pull request
+
+    func loadBranches(repoID: RepoRef) async throws -> [String] {
+        guard let (_, client) = resolve(repoID) else { throw ProviderError.accountUnavailable }
+        let path = repoID.path
+        return try await withRateLimitBackoff { try await client.branches(repo: path) }
+    }
+
+    /// Sends only what changed. A new target branch changes the diff, so the
+    /// whole PR is re-read after.
+    func editPullRequest(repoID: RepoRef, prID: Int, title: String, body: String, targetBranch: String) async throws {
+        guard let (account, client) = resolve(repoID),
+              let existing = detailPullRequests[repoID]?.first(where: { $0.id == prID }) else {
+            throw ProviderError.accountUnavailable
+        }
+        let source = existing.source
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        var edit = PullRequestEdit()
+        if trimmedTitle != source.title { edit.title = trimmedTitle }
+        if body != source.body { edit.body = body }
+        if targetBranch != source.targetBranch { edit.targetBranch = targetBranch }
+        guard edit.title != nil || edit.body != nil || edit.targetBranch != nil else { return }
+
+        let path = repoID.path
+        let change = edit
+        let updated = try await withRateLimitBackoff {
+            try await client.updatePullRequest(repo: path, number: prID, edit: change)
+        }
+        var mapped = DisplayMapper.pullRequest(updated, login: account.login)
+        mapped.keepLoadedDetail(from: existing)
+        updatePullRequest(repoID: repoID, prID: prID) { $0 = mapped }
+        if var hit = prSearchResults[repoID], hit.id == prID {
+            hit = mapped
+            assign(\.prSearchResults[repoID], hit)
+        }
+        if edit.targetBranch != nil {
+            await refreshPRDetail(repoID: repoID, prID: prID)
+        }
+        // The repo list shows titles too.
+        if edit.title != nil { Task { await refresh(force: true) } }
     }
 
     func isSubmittingReview(repoID: RepoRef, prID: Int) -> Bool {
@@ -1005,5 +1143,12 @@ final class LiveRepoStore {
 
     private static func message(for error: Error, fallback: String) -> String {
         (error as? LocalizedError)?.errorDescription ?? fallback
+    }
+}
+
+private extension RepoPullRequest {
+    mutating func apply(_ review: CodeReview) {
+        reviewThreads = review.threads.map(DisplayMapper.reviewThread)
+        hasPendingReview = review.hasPendingReview
     }
 }

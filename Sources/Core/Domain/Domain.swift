@@ -104,6 +104,8 @@ struct PullRequestFileChange: Equatable, Sendable {
     /// provider speaks. `nil` when the provider didn't send one — binary,
     /// or too large for it to show.
     var patch: String? = nil
+    /// The old path of a renamed file.
+    var previousFilename: String? = nil
 }
 
 struct Issue: Equatable, Sendable {
@@ -224,6 +226,70 @@ struct Comment: Equatable, Sendable {
     let createdAt: Date
 }
 
+/// A point in a PR's diff that a review comment hangs on: one line of one
+/// file. A removed line has only `oldLine`, an added line only `newLine`,
+/// an unchanged (context) line both — the numbers `UnifiedDiff` gives it.
+struct DiffAnchor: Hashable, Sendable {
+    /// The file's path after the change (its name in the PR's file list).
+    let path: String
+    let oldLine: Int?
+    let newLine: Int?
+    /// The path before the change, for a renamed file (GitLab needs both).
+    var oldPath: String? = nil
+}
+
+/// One comment in an inline thread. `isPending` = part of your own
+/// unsubmitted review: only you can see it, and you can edit or delete it.
+struct ReviewNote: Equatable, Sendable {
+    /// The provider's id for editing/deleting a pending note.
+    let id: String
+    let author: String
+    let body: String
+    let createdAt: Date
+    var isPending = false
+}
+
+/// An inline code-review conversation on one line of the diff.
+struct ReviewThread: Equatable, Sendable {
+    /// The provider's handle for replying/resolving (GitHub: the thread's
+    /// node id; GitLab: the discussion id). Pending-only threads get an id
+    /// of their own.
+    let id: String
+    let path: String
+    /// `nil` when the line is no longer in the current diff (outdated).
+    let anchor: DiffAnchor?
+    let notes: [ReviewNote]
+    var isResolved = false
+    /// You may resolve/unresolve it (GitHub's `viewerCanResolve`, GitLab's
+    /// `resolvable`).
+    var canResolve = false
+
+    /// Started in your unsubmitted review — nothing to reply to or resolve yet.
+    var isPending: Bool { !notes.isEmpty && notes.allSatisfy(\.isPending) }
+}
+
+/// Every inline thread on a PR, plus whether you have a review in
+/// progress — kept on the provider, as on the web, so it's shared with the
+/// browser and survives a restart.
+struct CodeReview: Equatable, Sendable {
+    let threads: [ReviewThread]
+    let hasPendingReview: Bool
+}
+
+/// A new inline comment.
+struct NewReviewComment: Sendable {
+    let anchor: DiffAnchor
+    let body: String
+}
+
+/// What the edit form can change on an existing PR. Only the fields that
+/// differ from the PR are set.
+struct PullRequestEdit: Sendable {
+    var title: String?
+    var body: String?
+    var targetBranch: String?
+}
+
 /// A formal review verdict — what the PR screen's composer submits.
 enum ReviewDecision: Sendable {
     case approve
@@ -269,6 +335,9 @@ struct RateLimitStatus: Equatable, Sendable {
 struct ProviderCapabilities: Sendable {
     var supportsRequestChanges = true
     var supportsNotifications = false
+    /// GitHub refuses Approve / Request changes on your own PR; GitLab
+    /// leaves it to a project setting (the provider's answer is shown).
+    var allowsVerdictOnOwnPullRequest = true
 }
 
 /// What one account's token is actually allowed to do, as far as the

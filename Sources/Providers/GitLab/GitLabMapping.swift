@@ -54,7 +54,49 @@ extension GitLabDiff {
         let patch = (diff?.isEmpty == false && tooLarge != true) ? diff : nil
         let (additions, deletions) = GitLabMapping.lineCounts(patch)
         return PullRequestFileChange(filename: newPath, status: status,
-                                     additions: additions, deletions: deletions, patch: patch)
+                                     additions: additions, deletions: deletions, patch: patch,
+                                     previousFilename: oldPath == newPath ? nil : oldPath)
+    }
+}
+
+extension GitLabPosition {
+    var anchor: DiffAnchor? {
+        guard oldLine != nil || newLine != nil, let path = newPath ?? oldPath else { return nil }
+        return DiffAnchor(path: path, oldLine: oldLine, newLine: newLine, oldPath: oldPath)
+    }
+}
+
+extension GitLabNote {
+    var reviewNote: ReviewNote {
+        ReviewNote(id: String(id), author: author?.username ?? "", body: body, createdAt: createdAt)
+    }
+}
+
+extension GitLabMapping {
+    /// Diff discussions plus your draft notes: a draft replying to a
+    /// discussion joins it as a pending note, the rest are pending threads.
+    static func codeReview(discussions: [GitLabDiscussion], drafts: [GitLabDraftNote], now: Date = Date()) -> CodeReview {
+        var threads: [ReviewThread] = discussions.compactMap { discussion in
+            let human = discussion.notes.filter { $0.system != true }
+            guard let first = human.first, first.type == "DiffNote" else { return nil }
+            let path = first.position?.newPath ?? first.position?.oldPath ?? ""
+            return ReviewThread(id: discussion.id, path: path, anchor: first.position?.anchor,
+                                notes: human.map(\.reviewNote), isResolved: first.resolved ?? false,
+                                canResolve: first.resolvable ?? false)
+        }
+        for draft in drafts {
+            let note = ReviewNote(id: String(draft.id), author: "", body: draft.note ?? "", createdAt: now, isPending: true)
+            if let discussionID = draft.discussionID, let index = threads.firstIndex(where: { $0.id == discussionID }) {
+                let thread = threads[index]
+                threads[index] = ReviewThread(id: thread.id, path: thread.path, anchor: thread.anchor,
+                                              notes: thread.notes + [note], isResolved: thread.isResolved,
+                                              canResolve: thread.canResolve)
+            } else if let position = draft.position {
+                threads.append(ReviewThread(id: "draft-\(draft.id)", path: position.newPath ?? position.oldPath ?? "",
+                                            anchor: position.anchor, notes: [note]))
+            }
+        }
+        return CodeReview(threads: threads, hasPendingReview: !drafts.isEmpty)
     }
 }
 

@@ -134,7 +134,19 @@ enum DisplayMapper {
 
     static func fileChange(_ file: PullRequestFileChange) -> PRFileChange {
         PRFileChange(filename: file.filename, status: file.status,
-                    additions: file.additions, deletions: file.deletions, patch: file.patch)
+                    additions: file.additions, deletions: file.deletions, patch: file.patch,
+                    previousFilename: file.previousFilename)
+    }
+
+    static func reviewThread(_ thread: ReviewThread) -> PRReviewThread {
+        PRReviewThread(
+            id: thread.id, path: thread.path, anchor: thread.anchor,
+            notes: thread.notes.map { note in
+                PRReviewNote(id: note.id, author: note.author, initials: initials(for: note.author),
+                             timeAgo: note.isPending ? "" : relativeTime(from: note.createdAt),
+                             text: note.body, isPending: note.isPending)
+            },
+            isResolved: thread.isResolved, canResolve: thread.canResolve)
     }
 
     /// The repo-list row. `recentPulls`/`recentIssues` are the cheap tier's

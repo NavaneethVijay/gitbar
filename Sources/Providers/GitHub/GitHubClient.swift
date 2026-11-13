@@ -6,7 +6,8 @@ import Foundation
 /// status handling) are the shared `HTTPTransport`.
 actor GitHubClient: ProviderClient {
     nonisolated let kind = ProviderKind.github
-    nonisolated let capabilities = ProviderCapabilities(supportsRequestChanges: true, supportsNotifications: true)
+    nonisolated let capabilities = ProviderCapabilities(supportsRequestChanges: true, supportsNotifications: true,
+                                                         allowsVerdictOnOwnPullRequest: false)
 
     private let transport: HTTPTransport
     /// Site root for building browser links ("https://github.com").
@@ -297,26 +298,133 @@ actor GitHubClient: ProviderClient {
         return files.map(\.domain)
     }
 
+    /// Threads, their notes (yours still pending included) and whether you
+    /// have a review in progress — one GraphQL query; REST has no thread
+    /// ids, resolved state or pending notes.
+    func codeReview(repo: String, number: Int) async throws -> CodeReview {
+        let pr = try await reviewQuery(repo: repo, number: number)
+        return GitHubMapping.codeReview(pr)
+    }
+
     // MARK: - Writes
 
+    /// Your pending review when there is one (it holds the inline
+    /// comments), else a fresh review with just the verdict.
     func submitReview(repo: String, number: Int, decision: ReviewDecision, body: String?) async throws {
+        let event = GitHubMapping.reviewEvent(decision)
+        let ids = try await reviewIDs(repo: repo, number: number)
+        if let pending = ids.pendingReviewID {
+            struct Result: Decodable {}
+            let _: Result = try await graphQLChecked("""
+                mutation($id: ID!, $event: PullRequestReviewEvent!, $body: String) {
+                  submitPullRequestReview(input: {pullRequestReviewId: $id, event: $event, body: $body}) { clientMutationId }
+                }
+                """, variables: ["id": .string(pending), "event": .string(event), "body": body.map { .string($0) } ?? .null])
+            return
+        }
         struct Submission: Encodable { let body: String?; let event: String }
         struct Ignored: Decodable {}
-        let submission = Submission(body: body, event: GitHubMapping.reviewEvent(decision))
-        do {
-            let _: Ignored = try await transport.send(
-                "POST", url("/repos/\(repo)/pulls/\(number)/reviews"), body: submission)
-        } catch ProviderError.validationFailed(let message) where message.localizedCaseInsensitiveContains("pending review") {
-            // A draft review started on the web ("Start a review") blocks a
-            // new one — submit that draft instead, as "Finish your review"
-            // does. Only your own pending review is visible in the list.
-            let reviews: [GitHubReview] = try await get("/repos/\(repo)/pulls/\(number)/reviews?per_page=100").value
-            guard let pending = reviews.last(where: { $0.state == "PENDING" }) else {
-                throw ProviderError.validationFailed(message)
-            }
-            let _: Ignored = try await transport.send(
-                "POST", url("/repos/\(repo)/pulls/\(number)/reviews/\(pending.id)/events"), body: submission)
+        let _: Ignored = try await transport.send(
+            "POST", url("/repos/\(repo)/pulls/\(number)/reviews"), body: Submission(body: body, event: event))
+    }
+
+    func addReviewComment(repo: String, pullRequest: PullRequest, comment: NewReviewComment, pending: Bool) async throws {
+        let anchor = comment.anchor
+        guard let line = anchor.newLine ?? anchor.oldLine else {
+            throw ProviderError.validationFailed("That line can't take a comment.")
         }
+        let side = anchor.newLine != nil ? "RIGHT" : "LEFT"
+        guard pending else {
+            // "Add single comment": a standalone review comment, posted now.
+            struct NewComment: Encodable {
+                let body: String
+                let commitID: String
+                let path: String
+                let line: Int
+                let side: String
+                enum CodingKeys: String, CodingKey { case body, path, line, side; case commitID = "commit_id" }
+            }
+            struct Ignored: Decodable {}
+            let _: Ignored = try await transport.send(
+                "POST", url("/repos/\(repo)/pulls/\(pullRequest.number)/comments"),
+                body: NewComment(body: comment.body, commitID: pullRequest.headSHA, path: anchor.path, line: line, side: side))
+            return
+        }
+        // "Start a review" / "Add review comment".
+        let ids = try await reviewIDs(repo: repo, number: pullRequest.number)
+        let reviewID: String
+        if let existing = ids.pendingReviewID {
+            reviewID = existing
+        } else {
+            struct Result: Decodable {
+                struct Payload: Decodable { struct Review: Decodable { let id: String }; let pullRequestReview: Review }
+                let addPullRequestReview: Payload
+            }
+            let result: Result = try await graphQLChecked("""
+                mutation($pr: ID!) { addPullRequestReview(input: {pullRequestId: $pr}) { pullRequestReview { id } } }
+                """, variables: ["pr": .string(ids.pullRequestID)])
+            reviewID = result.addPullRequestReview.pullRequestReview.id
+        }
+        struct Result: Decodable {}
+        let _: Result = try await graphQLChecked("""
+            mutation($review: ID!, $path: String!, $line: Int!, $side: DiffSide!, $body: String!) {
+              addPullRequestReviewThread(input: {pullRequestReviewId: $review, path: $path, line: $line, side: $side, body: $body}) { clientMutationId }
+            }
+            """, variables: ["review": .string(reviewID), "path": .string(anchor.path), "line": .int(line),
+                             "side": .string(side), "body": .string(comment.body)])
+    }
+
+    func updatePendingComment(repo: String, number: Int, noteID: String, body: String) async throws {
+        struct Result: Decodable {}
+        let _: Result = try await graphQLChecked("""
+            mutation($id: ID!, $body: String!) {
+              updatePullRequestReviewComment(input: {pullRequestReviewCommentId: $id, body: $body}) { clientMutationId }
+            }
+            """, variables: ["id": .string(noteID), "body": .string(body)])
+    }
+
+    func deletePendingComment(repo: String, number: Int, noteID: String) async throws {
+        struct Result: Decodable {}
+        let _: Result = try await graphQLChecked("""
+            mutation($id: ID!) { deletePullRequestReviewComment(input: {id: $id}) { clientMutationId } }
+            """, variables: ["id": .string(noteID)])
+    }
+
+    func discardPendingReview(repo: String, number: Int) async throws {
+        guard let pending = try await reviewIDs(repo: repo, number: number).pendingReviewID else { return }
+        struct Result: Decodable {}
+        let _: Result = try await graphQLChecked("""
+            mutation($id: ID!) { deletePullRequestReview(input: {pullRequestReviewId: $id}) { clientMutationId } }
+            """, variables: ["id": .string(pending)])
+    }
+
+    func replyToReviewThread(repo: String, number: Int, threadID: String, body: String) async throws {
+        struct Result: Decodable {}
+        let _: Result = try await graphQLChecked("""
+            mutation($id: ID!, $body: String!) {
+              addPullRequestReviewThreadReply(input: {pullRequestReviewThreadId: $id, body: $body}) { clientMutationId }
+            }
+            """, variables: ["id": .string(threadID), "body": .string(body)])
+    }
+
+    func setReviewThreadResolved(repo: String, number: Int, threadID: String, resolved: Bool) async throws {
+        struct Result: Decodable {}
+        let mutation = resolved ? "resolveReviewThread" : "unresolveReviewThread"
+        let _: Result = try await graphQLChecked("""
+            mutation($id: ID!) { \(mutation)(input: {threadId: $id}) { clientMutationId } }
+            """, variables: ["id": .string(threadID)])
+    }
+
+    func updatePullRequest(repo: String, number: Int, edit: PullRequestEdit) async throws -> PullRequest {
+        struct Update: Encodable { let title: String?; let body: String?; let base: String? }
+        let updated: GitHubPullRequest = try await transport.send(
+            "PATCH", url("/repos/\(repo)/pulls/\(number)"),
+            body: Update(title: edit.title, body: edit.body, base: edit.targetBranch))
+        return updated.domain
+    }
+
+    func branches(repo: String) async throws -> [String] {
+        try await branchNames(repo: repo)
     }
 
     /// An issue comment, so it lands in the same thread `comments` reads.
@@ -407,6 +515,67 @@ actor GitHubClient: ProviderClient {
             "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) { pullRequestTemplates { filename body } } }",
             variables: ["owner": owner, "name": name])
         return GitHubMapping.templates(response.data?.repository?.pullRequestTemplates ?? [])
+    }
+
+    /// The PR's node id and your pending review's, read fresh before a
+    /// review write — a review may have been finished or discarded on the web.
+    private func reviewIDs(repo: String, number: Int) async throws -> (pullRequestID: String, pendingReviewID: String?) {
+        guard let (owner, name) = Self.split(repo) else { throw ProviderError.validationFailed("Unknown repository.") }
+        struct Result: Decodable {
+            struct Repo: Decodable {
+                struct PR: Decodable { let id: String; let reviews: GitHubGQLNodes<GitHubGQLID> }
+                let pullRequest: PR?
+            }
+            let repository: Repo?
+        }
+        let result: Result = try await graphQLChecked("""
+            query($owner: String!, $name: String!) {
+              repository(owner: $owner, name: $name) { pullRequest(number: \(number)) { id reviews(states: PENDING, first: 1) { nodes { id } } } }
+            }
+            """, variables: ["owner": .string(owner), "name": .string(name)])
+        guard let pr = result.repository?.pullRequest else {
+            throw ProviderError.validationFailed("Couldn't find this pull request.")
+        }
+        return (pr.id, pr.reviews.nodes.first?.id)
+    }
+
+    private func reviewQuery(repo: String, number: Int) async throws -> GitHubGQLReviewPullRequest {
+        guard let (owner, name) = Self.split(repo) else { throw ProviderError.validationFailed("Unknown repository.") }
+        struct Result: Decodable {
+            struct Repo: Decodable { let pullRequest: GitHubGQLReviewPullRequest? }
+            let repository: Repo?
+        }
+        let result: Result = try await graphQLChecked("""
+            query($owner: String!, $name: String!) {
+              repository(owner: $owner, name: $name) {
+                pullRequest(number: \(number)) {
+                  reviews(states: PENDING, first: 1) { nodes { id } }
+                  reviewThreads(first: 100) {
+                    nodes {
+                      id isResolved viewerCanResolve viewerCanUnresolve diffSide line path
+                      comments(first: 50) { nodes { id body createdAt state author { login } } }
+                    }
+                  }
+                }
+              }
+            }
+            """, variables: ["owner": .string(owner), "name": .string(name)])
+        guard let pr = result.repository?.pullRequest else {
+            throw ProviderError.validationFailed("Couldn't find this pull request.")
+        }
+        return pr
+    }
+
+    /// GraphQL answers 200 even when it refuses — its `errors` become the
+    /// provider's message, like a REST 422.
+    private func graphQLChecked<T: Decodable>(_ query: String, variables: [String: GraphQLValue]) async throws -> T {
+        let response: GitHubGQLResponse<T> = try await transport.send(
+            "POST", graphQLURL, body: GitHubGQLRequest(query: query, variables: variables))
+        if let errors = response.errors, !errors.isEmpty {
+            throw ProviderError.validationFailed(errors.map(\.message).joined(separator: " "))
+        }
+        guard let data = response.data else { throw ProviderError.validationFailed("GitHub returned no data.") }
+        return data
     }
 
     private static func split(_ path: String) -> (owner: String, name: String)? {

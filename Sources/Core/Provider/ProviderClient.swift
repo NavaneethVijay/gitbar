@@ -53,8 +53,30 @@ protocol ProviderClient: Actor {
     /// Every file the PR touches, with its status and line counts.
     func files(repo: String, number: Int) async throws -> [PullRequestFileChange]
 
+    /// Inline code-review threads on the diff, oldest first, including the
+    /// notes of your own pending (unsubmitted) review.
+    func codeReview(repo: String, number: Int) async throws -> CodeReview
+
     // Writes.
+    /// Finishes a review: submits your pending review (with all its inline
+    /// comments) when there is one, else a review with just the verdict and
+    /// text.
     func submitReview(repo: String, number: Int, decision: ReviewDecision, body: String?) async throws
+    /// An inline comment. `pending`: add it to your pending review (starting
+    /// one if needed — "Start a review"); otherwise post it on its own right
+    /// away ("Add single comment").
+    func addReviewComment(repo: String, pullRequest: PullRequest, comment: NewReviewComment, pending: Bool) async throws
+    func updatePendingComment(repo: String, number: Int, noteID: String, body: String) async throws
+    func deletePendingComment(repo: String, number: Int, noteID: String) async throws
+    /// Throws away your pending review and every comment in it.
+    func discardPendingReview(repo: String, number: Int) async throws
+    /// A reply in an existing inline thread (`ReviewThread.id`), posted now.
+    func replyToReviewThread(repo: String, number: Int, threadID: String, body: String) async throws
+    func setReviewThreadResolved(repo: String, number: Int, threadID: String, resolved: Bool) async throws
+    /// Title, description and/or target branch of an existing PR.
+    func updatePullRequest(repo: String, number: Int, edit: PullRequestEdit) async throws -> PullRequest
+    /// Every branch name (capped), for the edit form's target picker.
+    func branches(repo: String) async throws -> [String]
     /// A plain reply into the conversation thread (what `comments` lists) —
     /// no review verdict attached.
     func addComment(repo: String, number: Int, body: String) async throws -> Comment

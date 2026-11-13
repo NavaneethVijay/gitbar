@@ -286,23 +286,117 @@ actor GitLabClient: ProviderClient {
         }
     }
 
+    /// Diff discussions (one page of 100) plus your draft notes — GitLab's
+    /// pending review. Drafts are best-effort: an instance without the
+    /// draft-notes API just shows posted threads.
+    func codeReview(repo: String, number: Int) async throws -> CodeReview {
+        let base = "/projects/\(Self.project(repo))/merge_requests/\(number)"
+        async let draftsTask: (value: [GitLabDraftNote], hasNextPage: Bool)? = try? get("\(base)/draft_notes?per_page=100")
+        let discussions: [GitLabDiscussion] = try await get("\(base)/discussions?per_page=100").value
+        let drafts = await draftsTask?.value ?? []
+        return GitLabMapping.codeReview(discussions: discussions, drafts: drafts)
+    }
+
     // MARK: - Writes
 
-    /// Approve is its own endpoint; a review's text is posted as a comment
-    /// alongside (GitLab has no review body). `.comment` is just the comment.
+    /// "Submit review": publishes your draft notes, then the summary as a
+    /// comment (GitLab reviews have no body of their own), then approves.
     func submitReview(repo: String, number: Int, decision: ReviewDecision, body: String?) async throws {
         let text = body?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        switch decision {
-        case .approve:
-            let _: Empty = try await transport.send(
-                "POST", url("/projects/\(Self.project(repo))/merge_requests/\(number)/approve"), body: Empty())
-            if !text.isEmpty { _ = try await addComment(repo: repo, number: number, body: text) }
-        case .comment:
-            guard !text.isEmpty else { throw ProviderError.validationFailed("Write a comment first.") }
-            _ = try await addComment(repo: repo, number: number, body: text)
-        case .requestChanges:
+        if decision == .requestChanges {
             throw ProviderError.validationFailed("GitLab doesn't support requesting changes here — leave a comment instead.")
         }
+        let base = "/projects/\(Self.project(repo))/merge_requests/\(number)"
+        let drafts = (try? await get("\(base)/draft_notes?per_page=100").value as [GitLabDraftNote]) ?? []
+        if decision == .comment, text.isEmpty, drafts.isEmpty {
+            throw ProviderError.validationFailed("Write a comment first.")
+        }
+        if !drafts.isEmpty {
+            try await transport.sendEmpty("POST", url("\(base)/draft_notes/bulk_publish"))
+        }
+        if !text.isEmpty { _ = try await addComment(repo: repo, number: number, body: text) }
+        if decision == .approve {
+            let _: Empty = try await transport.send("POST", url("\(base)/approve"), body: Empty())
+        }
+    }
+
+    /// `pending`: a draft note ("Start a review" / "Add to review");
+    /// otherwise a diff discussion, posted now ("Add comment now"). Both are
+    /// pinned to the MR's current diff (`diff_refs`).
+    func addReviewComment(repo: String, pullRequest: PullRequest, comment: NewReviewComment, pending: Bool) async throws {
+        let base = "/projects/\(Self.project(repo))/merge_requests/\(pullRequest.number)"
+        let mr: GitLabMergeRequest = try await get(base).value
+        guard let refs = mr.diffRefs else {
+            throw ProviderError.validationFailed("This GitLab version doesn't report the diff's commits — can't place line comments.")
+        }
+        let anchor = comment.anchor
+        let position = GitLabPosition(
+            baseSHA: refs.baseSHA, startSHA: refs.startSHA, headSHA: refs.headSHA,
+            oldPath: anchor.oldPath ?? anchor.path, newPath: anchor.path,
+            oldLine: anchor.oldLine, newLine: anchor.newLine)
+        if pending {
+            struct NewDraft: Encodable { let note: String; let position: GitLabPosition }
+            let _: GitLabDraftNote = try await transport.send(
+                "POST", url("\(base)/draft_notes"), body: NewDraft(note: comment.body, position: position))
+        } else {
+            struct NewDiscussion: Encodable { let body: String; let position: GitLabPosition }
+            let _: GitLabDiscussion = try await transport.send(
+                "POST", url("\(base)/discussions"), body: NewDiscussion(body: comment.body, position: position))
+        }
+    }
+
+    func updatePendingComment(repo: String, number: Int, noteID: String, body: String) async throws {
+        struct Update: Encodable { let note: String }
+        let _: GitLabDraftNote = try await transport.send(
+            "PUT", url("/projects/\(Self.project(repo))/merge_requests/\(number)/draft_notes/\(noteID)"),
+            body: Update(note: body))
+    }
+
+    func deletePendingComment(repo: String, number: Int, noteID: String) async throws {
+        try await transport.sendEmpty("DELETE", url("/projects/\(Self.project(repo))/merge_requests/\(number)/draft_notes/\(noteID)"))
+    }
+
+    /// GitLab has no "discard review" call — each draft is deleted.
+    func discardPendingReview(repo: String, number: Int) async throws {
+        let base = "/projects/\(Self.project(repo))/merge_requests/\(number)"
+        let drafts: [GitLabDraftNote] = try await get("\(base)/draft_notes?per_page=100").value
+        for draft in drafts {
+            try await transport.sendEmpty("DELETE", url("\(base)/draft_notes/\(draft.id)"))
+        }
+    }
+
+    func replyToReviewThread(repo: String, number: Int, threadID: String, body: String) async throws {
+        struct NewNote: Encodable { let body: String }
+        let _: GitLabNote = try await transport.send(
+            "POST", url("/projects/\(Self.project(repo))/merge_requests/\(number)/discussions/\(threadID)/notes"),
+            body: NewNote(body: body))
+    }
+
+    func setReviewThreadResolved(repo: String, number: Int, threadID: String, resolved: Bool) async throws {
+        struct Update: Encodable { let resolved: Bool }
+        let _: GitLabDiscussion = try await transport.send(
+            "PUT", url("/projects/\(Self.project(repo))/merge_requests/\(number)/discussions/\(threadID)"),
+            body: Update(resolved: resolved))
+    }
+
+    func updatePullRequest(repo: String, number: Int, edit: PullRequestEdit) async throws -> PullRequest {
+        struct Update: Encodable {
+            let title: String?
+            let description: String?
+            let targetBranch: String?
+            enum CodingKeys: String, CodingKey {
+                case title, description
+                case targetBranch = "target_branch"
+            }
+        }
+        let updated: GitLabMergeRequest = try await transport.send(
+            "PUT", url("/projects/\(Self.project(repo))/merge_requests/\(number)"),
+            body: Update(title: edit.title, description: edit.body, targetBranch: edit.targetBranch))
+        return updated.domain
+    }
+
+    func branches(repo: String) async throws -> [String] {
+        try await branchNames(repo: repo)
     }
 
     func addComment(repo: String, number: Int, body: String) async throws -> Comment {

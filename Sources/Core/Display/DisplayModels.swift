@@ -71,6 +71,55 @@ struct PRFileChange: Identifiable, Equatable {
     let deletions: Int
     /// Raw unified diff — parsed only when the file is expanded (`UnifiedDiff`).
     var patch: String? = nil
+    /// The old path of a renamed file — inline comments need it on GitLab.
+    var previousFilename: String? = nil
+}
+
+/// One comment in an inline thread.
+struct PRReviewNote: Identifiable, Equatable {
+    let id: String
+    let author: String
+    let initials: String
+    let timeAgo: String
+    let text: String
+    /// In your unsubmitted review — editable, deletable, "Pending".
+    let isPending: Bool
+}
+
+/// An inline code-review thread, drawn under its diff line.
+struct PRReviewThread: Identifiable, Equatable {
+    let id: String
+    let path: String
+    /// `nil` = outdated: the line isn't in the current diff any more.
+    let anchor: DiffAnchor?
+    let notes: [PRReviewNote]
+    let isResolved: Bool
+    let canResolve: Bool
+
+    /// Started in your pending review — no replies or resolving yet.
+    var isPending: Bool { !notes.isEmpty && notes.allSatisfy(\.isPending) }
+    var pendingCount: Int { notes.filter(\.isPending).count }
+}
+
+/// One file's inline review at a glance — the file list's chips.
+struct FileThreadSummary: Equatable {
+    /// Posted threads still unresolved.
+    var open = 0
+    var resolved = 0
+    /// Your comments waiting in the pending review (new threads and replies).
+    var pending = 0
+
+    var isEmpty: Bool { open == 0 && resolved == 0 && pending == 0 }
+
+    init(_ threads: [PRReviewThread]) {
+        for thread in threads {
+            pending += thread.pendingCount
+            guard !thread.isPending else { continue }
+            if thread.isResolved { resolved += 1 } else { open += 1 }
+        }
+    }
+
+    static func total(_ threads: [PRReviewThread]) -> FileThreadSummary { FileThreadSummary(threads) }
 }
 
 struct PRComment: Identifiable, Equatable {
@@ -130,6 +179,11 @@ struct RepoPullRequest: Identifiable, Equatable {
     var comments: [PRComment]
     var reviewers: [PRReviewer]
     var files: [PRFileChange] = []
+    /// Inline code-review threads, loaded with the files.
+    var reviewThreads: [PRReviewThread] = []
+    /// You have an unsubmitted review on the provider ("Finish your review").
+    var hasPendingReview = false
+    var pendingCommentCount: Int { reviewThreads.reduce(0) { $0 + $1.pendingCount } }
     /// The full diff on the web — `PullRequest.diffURL` — for "View diff".
     let diffURL: URL?
     /// The domain value behind this row, handed back to the provider for
@@ -157,6 +211,8 @@ struct RepoPullRequest: Identifiable, Equatable {
         comments = previous.comments
         reviewers = previous.reviewers
         files = previous.files
+        reviewThreads = previous.reviewThreads
+        hasPendingReview = previous.hasPendingReview
     }
 }
 

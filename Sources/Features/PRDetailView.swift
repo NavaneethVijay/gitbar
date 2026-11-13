@@ -39,6 +39,16 @@ struct PRDetailView: View {
     /// Re-fetches the check runs — called every `checksPollInterval` while
     /// CI is running and this screen is up.
     var onPollChecks: () async -> Void = {}
+    /// Shows Edit (title, description, target branch) — your own open PRs.
+    var canEdit = false
+    var loadBranches: () async throws -> [String] = { [] }
+    var onEdit: (_ title: String, _ body: String, _ targetBranch: String) async throws -> Void = { _, _, _ in }
+    /// The diff's review actions; `nil` for a closed/merged PR.
+    var inlineReview: InlineReviewActions?
+    /// Why Approve / Request changes are off (your own PR on GitHub).
+    var verdictBlockedReason: String?
+    /// Deletes your pending review and its comments.
+    var onDiscardReview: () async throws -> Void = {}
 
     private static let checksPollInterval: Duration = .seconds(20)
 
@@ -51,12 +61,84 @@ struct PRDetailView: View {
     @State private var submittedComment = false
     /// Window only: files whose diff is open, by filename.
     @State private var expandedFiles: Set<String> = []
+    /// "With comments": the window's file list narrowed to files with threads.
+    @State private var onlyCommentedFiles = false
     /// Window only: the content column's width — Checks and Reviewers sit
     /// side by side once there's room for both.
     @State private var contentWidth: CGFloat = 0
+    /// The edit form: a sheet in the window, its own screen in the popover.
+    @State private var isEditing = false
+    /// The "Finish your review" form: a popover in the window, in place of
+    /// the composer in the menu bar popover.
+    @State private var isReviewing = false
 
     private var draftIsEmpty: Bool {
         reviewDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// The bottom box is the conversation, as on the web; reviews (with
+    /// their inline comments) go through the review form.
+    private func commentTapped() {
+        submittedComment = true
+        onAddComment(reviewDraft)
+    }
+
+    private var commentDisabled: Bool { isSubmittingReview || draftIsEmpty }
+
+    private var reviewForm: some View {
+        ReviewSubmitView(
+            provider: provider,
+            isWindowed: isWindowed,
+            pendingCount: pr.pendingCommentCount,
+            hasPendingReview: pr.hasPendingReview,
+            canRequestChanges: canRequestChanges,
+            verdictBlockedReason: verdictBlockedReason,
+            isSubmitting: isSubmittingReview,
+            submitError: submittedComment ? nil : reviewSubmitError,
+            onSubmit: { decision, body in
+                submittedComment = false
+                onSubmitReview(decision, body)
+            },
+            onDiscard: {
+                try await onDiscardReview()
+                closeReviewForm()
+                showToast("Review discarded")
+            },
+            onCancel: closeReviewForm
+        )
+    }
+
+    private func closeReviewForm() {
+        withAnimation(.spring(response: 0.36, dampingFraction: 0.82)) { isReviewing = false }
+    }
+
+    /// "Review changes" / "Finish your review", with the pending count.
+    private var reviewButtonLabel: some View {
+        HStack(spacing: 6) {
+            Text(provider.reviewButtonTitle(inProgress: pr.hasPendingReview))
+            if pr.pendingCommentCount > 0 {
+                Text("\(pr.pendingCommentCount)")
+                    .font(.system(size: type.chip, weight: .bold))
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 1)
+                    .background(Capsule().fill(Palette.wash.opacity(0.15)))
+            }
+        }
+    }
+
+    private var editForm: some View {
+        EditPullRequestView(
+            pr: pr,
+            provider: provider,
+            isWindowed: isWindowed,
+            loadBranches: loadBranches,
+            onSave: { title, body, base in
+                try await onEdit(title, body, base)
+                withAnimation(.spring(response: 0.36, dampingFraction: 0.82)) { isEditing = false }
+                showToast("\(provider.pullRequestShort) \(provider.formatNumber(pr.id)) updated")
+            },
+            onCancel: { withAnimation(.spring(response: 0.36, dampingFraction: 0.82)) { isEditing = false } }
+        )
     }
 
     /// The window's content column: wide windows center it rather than
@@ -74,6 +156,7 @@ struct PRDetailView: View {
         .modifier(PRDetailFrame(isWindowed: isWindowed))
         .environment(\.detailType, type)
         .environment(\.onLinkCopied) { showToast("Link copied") }
+        .environment(\.showToast) { showToast($0) }
         // Live CI: while anything is running, keep re-reading the check runs
         // so spinners turn into results without a manual refresh.
         .task(id: pr.areChecksRunning) {
@@ -96,8 +179,13 @@ struct PRDetailView: View {
         // a failure must never lose what was typed.
         .onChange(of: isSubmittingReview) { wasSubmitting, isSubmitting in
             guard wasSubmitting, !isSubmitting, reviewSubmitError == nil else { return }
-            reviewDraft = ""
-            showToast(submittedComment ? "Comment posted" : "Review submitted")
+            if submittedComment {
+                reviewDraft = ""
+                showToast("Comment posted")
+            } else {
+                closeReviewForm()
+                showToast("Review submitted")
+            }
         }
     }
 
@@ -124,8 +212,13 @@ struct PRDetailView: View {
     private var layout: some View {
         if isWindowed {
             windowLayout
+                .sheet(isPresented: $isEditing) { editForm }
+        } else if isEditing {
+            editForm
+                .transition(.move(edge: .trailing).combined(with: .opacity))
         } else {
             popoverLayout
+                .transition(.move(edge: .leading).combined(with: .opacity))
         }
     }
 
@@ -178,6 +271,12 @@ struct PRDetailView: View {
 
     @ToolbarContentBuilder
     private var windowToolbar: some ToolbarContent {
+        if canEdit {
+            ToolbarItem {
+                Button("Edit", systemImage: "pencil") { isEditing = true }
+                    .help("Edit title, description and target branch")
+            }
+        }
         ToolbarItemGroup {
             if let url = pr.webURL {
                 Button("Copy Link", systemImage: "link") {
@@ -254,13 +353,24 @@ struct PRDetailView: View {
     /// 100 files only builds the ones scrolled into view.
     @ViewBuilder
     private var windowFilesSection: some View {
+        let threadsByFile = Dictionary(grouping: pr.reviewThreads, by: \.path)
+        let commentedFiles = pr.files.filter { threadsByFile[$0.filename] != nil }
+        let shownFiles = onlyCommentedFiles && !commentedFiles.isEmpty ? commentedFiles : pr.files
         HStack(spacing: 10) {
             SectionLabel("Files changed · \(pr.files.count)")
+            ReviewThreadChips(summary: .total(pr.reviewThreads))
             Spacer(minLength: 0)
+            if !commentedFiles.isEmpty {
+                Toggle("With comments (\(commentedFiles.count))", isOn: $onlyCommentedFiles)
+                    .toggleStyle(.checkbox)
+                    .font(.system(size: type.meta, weight: .semibold))
+                    .help("Only show files that have review comments")
+            }
             if !pr.files.isEmpty {
-                let allOpen = expandedFiles.count >= pr.files.count
+                let allOpen = shownFiles.allSatisfy { expandedFiles.contains($0.id) }
                 Button(allOpen ? "Collapse All" : "Expand All") {
-                    expandedFiles = allOpen ? [] : Set(pr.files.map(\.id))
+                    let ids = Set(shownFiles.map(\.id))
+                    if allOpen { expandedFiles.subtract(ids) } else { expandedFiles.formUnion(ids) }
                 }
                 .buttonStyle(.link)
                 .font(.system(size: type.meta, weight: .semibold))
@@ -286,7 +396,7 @@ struct PRDetailView: View {
             .padding(.horizontal, horizontalPadding)
             .padding(.bottom, 12)
         } else {
-            ForEach(pr.files) { file in
+            ForEach(shownFiles) { file in
                 DiffFileView(
                     file: file,
                     webDiffURL: pr.diffURL,
@@ -294,7 +404,9 @@ struct PRDetailView: View {
                         get: { expandedFiles.contains(file.id) },
                         set: { open in
                             if open { expandedFiles.insert(file.id) } else { expandedFiles.remove(file.id) }
-                        })
+                        }),
+                    threads: threadsByFile[file.filename] ?? [],
+                    review: inlineReview
                 )
                 .padding(.horizontal, horizontalPadding - 4)
                 .padding(.bottom, 4)
@@ -364,6 +476,12 @@ struct PRDetailView: View {
             Spacer(minLength: 4)
 
             if !isWindowed {
+                if canEdit {
+                    HeaderIconButton(systemImage: "pencil", help: "Edit \(provider.pullRequestShort)") {
+                        withAnimation(.spring(response: 0.36, dampingFraction: 0.82)) { isEditing = true }
+                    }
+                    .padding(.top, 1)
+                }
                 if let onOpenInWindow {
                     HeaderIconButton(systemImage: "macwindow", help: "Open in the repo window", action: onOpenInWindow)
                         .padding(.top, 1)
@@ -462,6 +580,7 @@ struct PRDetailView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 SectionLabel("Files changed · \(pr.files.count)")
+                ReviewThreadChips(summary: .total(pr.reviewThreads))
                 Spacer(minLength: 0)
                 if let diffURL = pr.diffURL {
                     ViewDiffLink(url: diffURL)
@@ -474,9 +593,10 @@ struct PRDetailView: View {
                     .font(.system(size: type.row))
                     .foregroundStyle(Palette.textTertiary)
             } else {
+                let threadsByFile = Dictionary(grouping: pr.reviewThreads, by: \.path)
                 VStack(spacing: 6) {
                     ForEach(pr.files) { file in
-                        FileChangeRow(file: file)
+                        FileChangeRow(file: file, threads: FileThreadSummary(threadsByFile[file.filename] ?? []))
                     }
                 }
             }
@@ -506,11 +626,24 @@ struct PRDetailView: View {
         .padding(.vertical, 12)
     }
 
-    /// "Comment" replies into the thread; Approve / Request changes submit
-    /// a formal review.
+    /// The conversation box, plus the review button — like the web, where
+    /// a comment and a review are separate things. In the menu bar popover
+    /// the review form takes this spot.
+    @ViewBuilder
     private var composer: some View {
+        if !isWindowed && isReviewing {
+            reviewForm
+                .padding(.horizontal, horizontalPadding)
+                .padding(.vertical, 10)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+        } else {
+            conversationComposer
+        }
+    }
+
+    private var conversationComposer: some View {
         VStack(alignment: .trailing, spacing: 8) {
-            if let reviewSubmitError {
+            if let reviewSubmitError, submittedComment {
                 Text(reviewSubmitError)
                     .font(.system(size: type.meta))
                     .foregroundStyle(Palette.danger)
@@ -522,8 +655,7 @@ struct PRDetailView: View {
                 if reviewDraft.isEmpty {
                     // Sits exactly where typed text starts: the editor's own
                     // padding plus NSTextView's 5pt line-fragment padding.
-                    Text(isWindowed ? "Leave a comment (optional for Approve)"
-                                    : "Leave a comment — optional for Approve")
+                    Text("Leave a comment")
                         .font(.system(size: composerFontSize))
                         .foregroundStyle(Palette.textPlaceholder)
                         .padding(.leading, composerInset + 5)
@@ -550,32 +682,59 @@ struct PRDetailView: View {
             .frame(height: isWindowed ? 96 : 52)
 
             HStack(spacing: 8) {
-                if isSubmittingReview {
+                if isWindowed {
+                    windowReviewButton
+                } else {
+                    Button {
+                        withAnimation(.spring(response: 0.36, dampingFraction: 0.82)) { isReviewing = true }
+                    } label: {
+                        reviewButtonLabel
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .foregroundStyle(pr.hasPendingReview ? Palette.attention : Palette.accent)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(Capsule().fill((pr.hasPendingReview ? Palette.attention : Palette.accent).opacity(0.14)))
+                            .overlay(Capsule().strokeBorder((pr.hasPendingReview ? Palette.attention : Palette.accent).opacity(0.4)))
+                            .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .pointerStyle(.link)
+                    .disabled(isSubmittingReview)
+                }
+                if isSubmittingReview && submittedComment {
                     ProgressView().controlSize(.small).scaleEffect(0.7)
                 }
                 Spacer(minLength: 0)
                 if isWindowed {
-                    largeReviewActions
+                    Button("Comment", action: commentTapped)
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
+                        .disabled(commentDisabled)
+                        .help("Comment in the conversation")
                 } else {
-                    ReviewActionButton(title: "Comment", color: Palette.neutral, isDisabled: isSubmittingReview || draftIsEmpty) {
-                        submittedComment = true
-                        onAddComment(reviewDraft)
-                    }
-                    if canRequestChanges {
-                        ReviewActionButton(title: "Request changes", color: Palette.danger, isDisabled: isSubmittingReview) {
-                            submittedComment = false
-                            onSubmitReview(.requestChanges, reviewDraft)
-                        }
-                    }
-                    ReviewActionButton(title: "Approve", color: RepoActivityState.idle.color, isDisabled: isSubmittingReview) {
-                        submittedComment = false
-                        onSubmitReview(.approve, reviewDraft)
+                    ReviewActionButton(title: "Comment", color: Palette.neutral, isDisabled: commentDisabled) {
+                        commentTapped()
                     }
                 }
             }
         }
         .padding(.horizontal, horizontalPadding)
         .padding(.vertical, 12)
+    }
+
+    /// Opens the review form as a popover above the button.
+    private var windowReviewButton: some View {
+        Button { isReviewing = true } label: { reviewButtonLabel }
+            .controlSize(.large)
+            .tint(pr.hasPendingReview ? Palette.attention : nil)
+            .buttonStyle(.bordered)
+            .disabled(isSubmittingReview && submittedComment)
+            .help(pr.hasPendingReview ? "Submit or discard your pending review"
+                                      : "Approve, request changes or comment with a review")
+            .popover(isPresented: $isReviewing, arrowEdge: .top) {
+                reviewForm
+                    .frame(width: 440)
+            }
     }
 }
 
@@ -597,37 +756,6 @@ private extension PRDetailView {
         }
     }
 
-    /// Stock buttons in the window — the system draws them in the current
-    /// macOS style (Liquid Glass on 26) instead of the popover's pills.
-    @ViewBuilder
-    var nativeReviewActions: some View {
-        Button("Comment") {
-            submittedComment = true
-            onAddComment(reviewDraft)
-        }
-        .disabled(isSubmittingReview || draftIsEmpty)
-        if canRequestChanges {
-            Button("Request Changes") {
-                submittedComment = false
-                onSubmitReview(.requestChanges, reviewDraft)
-            }
-            .tint(Palette.danger)
-            .disabled(isSubmittingReview)
-        }
-        Button("Approve") {
-            submittedComment = false
-            onSubmitReview(.approve, reviewDraft)
-        }
-        .buttonStyle(.borderedProminent)
-        .tint(RepoActivityState.idle.color)
-        .disabled(isSubmittingReview)
-    }
-
-    /// The window's review buttons at the large control size.
-    var largeReviewActions: some View {
-        HStack(spacing: 10) { nativeReviewActions }
-            .controlSize(.large)
-    }
 }
 
 /// The window's comment box surface (PR and issue screens): a
@@ -833,6 +961,8 @@ private struct ViewDiffLink: View {
 /// One file's line in the list — also the header of `DiffFileView`.
 struct FileChangeRow: View {
     let file: PRFileChange
+    /// The file's inline threads: open / resolved / pending.
+    var threads = FileThreadSummary([])
     @Environment(\.detailType) private var type
 
     private var glyph: String {
@@ -863,6 +993,7 @@ struct FileChangeRow: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer(minLength: 8)
+            FileCommentIndicator(summary: threads)
             HStack(spacing: 4) {
                 if file.additions > 0 {
                     Text("+\(file.additions)")
@@ -875,6 +1006,85 @@ struct FileChangeRow: View {
             }
             .font(.system(size: type.meta, weight: .semibold, design: .monospaced))
         }
+    }
+}
+
+/// Inline-review chips: open threads (accent), resolved (quiet), your
+/// pending comments (attention). Nothing when there are none.
+/// A file row's comment marker: one small bubble in a fixed column by the
+/// line counts, so commented files stand out down a long list. Blue = open
+/// threads, orange = your pending comments, green check = all resolved.
+struct FileCommentIndicator: View {
+    let summary: FileThreadSummary
+    @Environment(\.detailType) private var type
+
+    private var style: (icon: String, color: Color, count: Int) {
+        if summary.pending > 0 { return ("text.bubble.fill", Palette.attention, summary.open + summary.pending) }
+        if summary.open > 0 { return ("text.bubble.fill", Palette.accent, summary.open) }
+        return ("checkmark.bubble.fill", Palette.success, summary.resolved)
+    }
+
+    private var help: String {
+        var parts: [String] = []
+        if summary.open > 0 { parts.append("\(summary.open) open thread\(summary.open == 1 ? "" : "s")") }
+        if summary.resolved > 0 { parts.append("\(summary.resolved) resolved") }
+        if summary.pending > 0 { parts.append("\(summary.pending) pending comment\(summary.pending == 1 ? "" : "s")") }
+        return parts.joined(separator: " · ")
+    }
+
+    var body: some View {
+        if !summary.isEmpty {
+            let style = style
+            HStack(spacing: 2) {
+                Image(systemName: style.icon)
+                if style.count > 1 {
+                    Text("\(style.count)").font(.system(size: type.chip, weight: .bold))
+                }
+            }
+            .font(.system(size: type.meta + 2))
+            .foregroundStyle(style.color)
+            .fixedSize()
+            .help(help)
+        }
+    }
+}
+
+struct ReviewThreadChips: View {
+    let summary: FileThreadSummary
+    @Environment(\.detailType) private var type
+
+    var body: some View {
+        if !summary.isEmpty {
+            HStack(spacing: 4) {
+                if summary.open > 0 {
+                    chip("\(summary.open)", icon: "text.bubble.fill", color: Palette.accent,
+                         help: "\(summary.open) unresolved thread\(summary.open == 1 ? "" : "s")")
+                }
+                if summary.resolved > 0 {
+                    chip("\(summary.resolved)", icon: "checkmark.circle.fill", color: Palette.success,
+                         help: "\(summary.resolved) resolved thread\(summary.resolved == 1 ? "" : "s")")
+                }
+                if summary.pending > 0 {
+                    chip("\(summary.pending) pending", icon: nil, color: Palette.attention,
+                         help: "\(summary.pending) comment\(summary.pending == 1 ? "" : "s") in your pending review")
+                }
+            }
+            .fixedSize()
+        }
+    }
+
+    private func chip(_ text: String, icon: String?, color: Color, help: String) -> some View {
+        HStack(spacing: 3) {
+            if let icon {
+                Image(systemName: icon).font(.system(size: type.chip - 1))
+            }
+            Text(text).font(.system(size: type.chip, weight: .bold))
+        }
+        .foregroundStyle(color)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 1.5)
+        .background(Capsule().fill(color.opacity(0.14)))
+        .help(help)
     }
 }
 
@@ -1148,6 +1358,8 @@ struct PRDetailScreen: View {
     /// Whether the screen is actually on screen — no CI polling otherwise.
     var isVisible: @MainActor () -> Bool = { true }
 
+    private var isOwnPR: Bool { pr.author == repoStore.login(for: repoID) }
+
     var body: some View {
         PRDetailView(
             pr: pr,
@@ -1174,7 +1386,32 @@ struct PRDetailScreen: View {
             onPollChecks: { @MainActor in
                 guard isVisible() else { return }
                 await repoStore.refreshChecks(repoID: repoID, prID: pr.id)
-            }
+            },
+            canEdit: pr.source.state == .open && isOwnPR,
+            loadBranches: { try await repoStore.loadBranches(repoID: repoID) },
+            onEdit: { title, body, base in
+                try await repoStore.editPullRequest(repoID: repoID, prID: pr.id, title: title, body: body, targetBranch: base)
+            },
+            inlineReview: pr.source.state != .open ? nil : InlineReviewActions(
+                provider: repoStore.provider(for: repoID),
+                hasPendingReview: pr.hasPendingReview,
+                addComment: { anchor, body, pending in
+                    try await repoStore.addReviewComment(repoID: repoID, prID: pr.id, anchor: anchor, body: body, pending: pending)
+                },
+                updatePending: { id, body in
+                    try await repoStore.updatePendingComment(repoID: repoID, prID: pr.id, noteID: id, body: body)
+                },
+                deletePending: { id in try await repoStore.deletePendingComment(repoID: repoID, prID: pr.id, noteID: id) },
+                reply: { threadID, body in
+                    try await repoStore.replyToReviewThread(repoID: repoID, prID: pr.id, threadID: threadID, body: body)
+                },
+                setResolved: { threadID, resolved in
+                    try await repoStore.setReviewThreadResolved(repoID: repoID, prID: pr.id, threadID: threadID, resolved: resolved)
+                }
+            ),
+            verdictBlockedReason: isOwnPR && !repoStore.capabilities(for: repoID).allowsVerdictOnOwnPullRequest
+                ? "You can't approve or request changes on your own \(repoStore.provider(for: repoID).pullRequestNoun)." : nil,
+            onDiscardReview: { try await repoStore.discardPendingReview(repoID: repoID, prID: pr.id) }
         )
         .task(id: pr.id) {
             repoStore.beginPRDetail(repoID: repoID, prID: pr.id)

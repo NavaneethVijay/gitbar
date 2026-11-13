@@ -80,6 +80,22 @@ enum ProviderKind: String, Codable, CaseIterable, Identifiable, Sendable {
         self == .gitlab ? "merge request" : "pull request"
     }
 
+    // Review flow wording — each provider's own button names.
+
+    /// Posts one inline comment right away, outside a review.
+    var singleCommentAction: String { self == .gitlab ? "Add comment now" : "Add single comment" }
+    /// Adds an inline comment to the review already in progress.
+    var addToReviewAction: String { self == .gitlab ? "Add to review" : "Add review comment" }
+    var resolveThreadAction: String { self == .gitlab ? "Resolve thread" : "Resolve conversation" }
+    var unresolveThreadAction: String { self == .gitlab ? "Unresolve thread" : "Unresolve conversation" }
+    /// The composer's review button, before and during a review.
+    func reviewButtonTitle(inProgress: Bool) -> String {
+        switch self {
+        case .gitlab: return inProgress ? "Finish review" : "Review"
+        default: return inProgress ? "Finish your review" : "Review changes"
+        }
+    }
+
     /// "PR" / "MR" — buttons and compact labels.
     var pullRequestShort: String {
         self == .gitlab ? "MR" : "PR"
