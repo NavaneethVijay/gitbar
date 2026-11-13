@@ -82,6 +82,12 @@
   nav .links { display: flex; gap: 24px; font-size: 14px; }
   nav .links a { color: var(--muted); }
   nav .links a:hover { color: var(--text); text-decoration: none; }
+  nav .links { align-items: center; }
+  nav .links a.nav-dl {
+    color: #fff; font-weight: 600; padding: 6px 14px; border-radius: 980px;
+    background: linear-gradient(135deg, #5c6cff, #6b3fe8 55%, #8a2fd6);
+  }
+  nav .links a.nav-dl:hover { color: #fff; }
 
   /* Buttons */
   .btn {
@@ -104,7 +110,7 @@
   .logo.sm { width: 18px; height: 18px; }
 
   /* Hero */
-  .hero { position: relative; padding: 80px 0 24px; text-align: center; }
+  .hero { position: relative; padding: 80px 0 24px; text-align: center; overflow-x: clip; }
   .hero::before {
     content: ""; position: absolute; left: 50%; top: -200px; width: 1400px; height: 1000px; transform: translateX(-50%); z-index: -1;
     background:
@@ -131,6 +137,7 @@
   .lede { font-size: clamp(18px, 2.2vw, 21px); color: var(--muted); max-width: 660px; margin: 0 auto 32px; }
   .cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
   .meta { margin-top: 18px; font-size: 13px; color: var(--muted); }
+  .alt-install { margin-top: 6px; font-size: 14px; color: var(--muted); }
 
   .stage { position: relative; margin: 72px auto 0; max-width: 1080px; }
   .stage .window { width: 86%; }
@@ -218,30 +225,45 @@
   .card h4 { margin: 0 0 8px; font-size: 18px; letter-spacing: -0.01em; }
   .card p { margin: 0; color: var(--muted); font-size: 15px; }
 
-  /* Install */
-  .install { display: grid; grid-template-columns: 1fr 1.2fr; gap: 56px; align-items: start; }
-  .install .why > p { color: var(--muted); }
-  .steps { list-style: none; padding: 0; margin: 24px 0 0; display: grid; gap: 16px; }
-  .steps li { display: flex; gap: 12px; align-items: flex-start; }
+  /* Install: two option cards */
+  .options { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; align-items: stretch; }
+  /* Grid items default to min-width: auto, so a long command line would widen the column past the screen. */
+  .options > *, .option > * { min-width: 0; }
+  .option { display: flex; flex-direction: column; gap: 20px; padding: 30px; }
+  .option .badge {
+    align-self: flex-start; font-size: 12px; font-weight: 650; letter-spacing: .02em;
+    padding: 3px 10px; border-radius: 980px; color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 14%, transparent);
+  }
+  .option h3 { font-size: 24px; letter-spacing: -0.02em; margin: 0 0 6px; }
+  .option .sub { margin: 0; color: var(--muted); font-size: 15px; }
+  .option .end { margin-top: auto; display: flex; flex-wrap: wrap; gap: 12px 18px; align-items: center; }
+  .option .end .small { font-size: 14px; color: var(--muted); }
+  .steps { list-style: none; padding: 0; margin: 0; display: grid; gap: 16px; }
+  .steps li { display: flex; gap: 12px; align-items: flex-start; min-width: 0; }
+  .steps li > div { min-width: 0; flex: 1; }
   .steps b { display: block; }
   .steps span { color: var(--muted); font-size: 15px; }
   .steps .n {
     flex: none; width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center;
     font-size: 13px; font-weight: 700; color: #fff; background: linear-gradient(135deg, #5c6cff, #8a2fd6);
   }
-  .terminal { background: #15151c; color: #e6e6ef; border-radius: 14px; overflow: hidden; border: 1px solid rgba(255,255,255,.08); box-shadow: 0 30px 60px -20px rgba(0,0,0,.45); }
-  .terminal .bar { display: flex; gap: 7px; padding: 10px 14px; background: #1e1e27; border-bottom: 1px solid rgba(255,255,255,.06); align-items: center; }
-  .terminal .bar i { width: 12px; height: 12px; border-radius: 50%; }
+  .terminal { background: #15151c; color: #e6e6ef; border-radius: 12px; overflow: hidden; border: 1px solid rgba(255,255,255,.08); box-shadow: 0 20px 40px -20px rgba(0,0,0,.45); }
+  .steps .terminal { margin-top: 10px; }
+  .terminal .bar { display: flex; gap: 7px; padding: 8px 12px; background: #1e1e27; border-bottom: 1px solid rgba(255,255,255,.06); align-items: center; }
+  .terminal .bar i { width: 11px; height: 11px; border-radius: 50%; }
   .terminal .bar i:nth-child(1) { background: #ff5f57; }
   .terminal .bar i:nth-child(2) { background: #febc2e; }
   .terminal .bar i:nth-child(3) { background: #28c840; }
   .terminal .bar span { margin-left: 8px; font-size: 12px; color: #8a8a99; flex-grow: 1; }
-  .terminal pre { margin: 0; padding: 20px 22px; overflow-x: auto; line-height: 1.75; }
+  /* Commands wrap rather than scroll, so the whole command is always visible. */
+  .terminal pre { margin: 0; padding: 14px 18px; line-height: 1.7; font-size: 13px; white-space: pre-wrap; overflow-wrap: anywhere; }
   .terminal .c { color: #8b8ba0; }
   .terminal .p { color: #a78bfa; user-select: none; }
-  .copy { font: 600 12px -apple-system, system-ui, sans-serif; color: #d4d4e0; background: rgba(255,255,255,.1); border: 0; border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+  .copy { font: 600 12px -apple-system, system-ui, sans-serif; color: #d4d4e0; background: rgba(255,255,255,.1); border: 0; border-radius: 6px; padding: 6px 12px; min-height: 30px; cursor: pointer; }
   .copy:hover { background: rgba(255,255,255,.16); }
-  .install .note { font-size: 14px; color: var(--muted); margin-top: 16px; }
+  .after { text-align: center; color: var(--muted); max-width: 720px; margin: 40px auto 0; font-size: 15px; }
+  .after b { color: var(--text); }
 
   .final { text-align: center; }
   .final img { width: 84px; margin: 0 auto 22px; }
@@ -264,7 +286,8 @@
     .trio { grid-template-columns: repeat(2, 1fr); gap: 40px 24px; }
     .trio figure:last-child { grid-column: 1 / -1; max-width: 50%; margin: 0 auto; }
     .hint { display: block; }
-    .showcase, .install { grid-template-columns: 1fr; gap: 36px; }
+    .showcase { grid-template-columns: 1fr; gap: 36px; }
+    .options { grid-template-columns: 1fr; max-width: 620px; margin: 0 auto; }
     .grid, .cols { grid-template-columns: repeat(2, 1fr); }
   }
   @media (max-width: 640px) {
@@ -278,7 +301,13 @@
     .section-head { margin-bottom: 40px; }
     .section-head p { font-size: 17px; }
     .tabs button { padding: 10px 14px; }
-    .terminal pre { font-size: 12px; padding: 16px; }
+    .terminal pre { font-size: 12px; padding: 14px; }
+    .option { padding: 22px 18px; }
+    .option h3 { font-size: 22px; }
+    .cta { flex-direction: column; align-items: center; }
+    .cta .btn { width: 100%; max-width: 340px; justify-content: center; }
+    .lede { font-size: 17px; }
+    nav .links { gap: 14px; }
     section { padding: 72px 0; }
     .hero { padding-top: 56px; }
     .wrap { padding: 0 16px; }
@@ -296,6 +325,7 @@
       <a href="#window">Main window</a>
       <a href="#install">Install</a>
       <a class="gh" href="https://github.com/NavaneethVijay/gitbar">GitHub</a>
+      <a class="gh nav-dl" href="https://github.com/NavaneethVijay/gitbar/releases/latest">Download</a>
     </div>
   </div>
 </nav>
@@ -308,10 +338,10 @@
     <p class="lede">gitbar lives in your Mac's menu bar and keeps an eye on your GitHub and GitLab repos. One click shows you what needs your attention. When it's time to dig in, a full window lets you review, comment and approve without opening a single browser tab.</p>
     <div class="cta">
       <a class="btn btn-primary" href="https://github.com/NavaneethVijay/gitbar/releases/latest">Download for Mac</a>
-      <a class="btn btn-ghost" href="#install">Install from source</a>
       <a class="btn btn-ghost" href="https://github.com/NavaneethVijay/gitbar"><span class="logo github sm"></span>View on GitHub</a>
     </div>
     <div class="meta">Free forever · Open source (MIT) · No tracking</div>
+    <div class="alt-install">Rather build it yourself? <a href="#install">Install from source</a></div>
 
     <div class="stage">
       <img class="window shot" src="assets/screens/main-review-requested.png" width="3840" height="2280" alt="gitbar main window: Review Requested across all repos, with a pull request open beside the list">
@@ -450,37 +480,65 @@
 </section>
 
 <section id="install">
-  <div class="wrap install">
-    <div class="why reveal">
+  <div class="wrap">
+    <div class="section-head reveal">
       <div class="kicker">Install</div>
-      <h2>Build it on your own Mac.</h2>
-      <p>Build gitbar from source and it opens with no security warnings, and you can read every line of code you're running.</p>
-      <p>Prefer a download? Grab the <a href="https://github.com/NavaneethVijay/gitbar/releases/latest">DMG from the latest release</a>. gitbar isn't signed by Apple, so you unblock it once with one Terminal command. The <a href="https://github.com/NavaneethVijay/gitbar#option-a-download-the-dmg">README</a> walks you through it, and updates then install from inside the app.</p>
-      <ul class="steps">
-        <li><span class="n">1</span><div><b>Get the tools</b><span>macOS 15 or later, <a href="https://apps.apple.com/app/xcode/id497799835">Xcode</a> (open it once) and <a href="https://brew.sh">Homebrew</a>.</span></div></li>
-        <li><span class="n">2</span><div><b>Build and install</b><span>Run a few commands. It takes about five minutes, plus the Xcode download.</span></div></li>
-        <li><span class="n">3</span><div><b>Connect an account</b><span>Click the menu bar icon, then the gear, then Settings. Add your account and paste a personal access token.</span></div></li>
-      </ul>
+      <h2>Two ways to install.</h2>
+      <p>Both give you the same free app. You need macOS 15 (Sequoia) or later.</p>
     </div>
-    <div class="reveal">
-      <div class="terminal">
-        <div class="bar"><i></i><i></i><i></i><span>Terminal</span><button class="copy" type="button" data-copy="brew install xcodegen
+    <div class="options">
+      <div class="card option reveal">
+        <span class="badge">Quickest</span>
+        <div>
+          <h3>Download the app</h3>
+          <p class="sub">About a minute, no developer tools needed.</p>
+        </div>
+        <ol class="steps">
+          <li><span class="n">1</span><div><b>Download the DMG</b><span>Open it and drag gitbar into your Applications folder.</span></div></li>
+          <li><span class="n">2</span><div><b>Unblock it once</b><span>gitbar isn't signed by Apple, so macOS blocks it the first time. Paste this into Terminal:</span>
+            <div class="terminal">
+              <div class="bar"><i></i><i></i><i></i><span>Terminal</span><button class="copy" type="button" data-copy="xattr -dr com.apple.quarantine /Applications/gitbar.app">Copy</button></div>
+<pre><span class="p">$ </span>xattr -dr com.apple.quarantine /Applications/gitbar.app</pre>
+            </div>
+          </div></li>
+          <li><span class="n">3</span><div><b>Open gitbar</b><span>Its icon appears in the menu bar. Updates install from inside the app, with no more Terminal.</span></div></li>
+        </ol>
+        <div class="end">
+          <a class="btn btn-primary" href="https://github.com/NavaneethVijay/gitbar/releases/latest">Download the DMG</a>
+          <a class="small" href="https://github.com/NavaneethVijay/gitbar#option-a-download-the-dmg">Step-by-step guide</a>
+        </div>
+      </div>
+
+      <div class="card option reveal">
+        <span class="badge">No security prompt</span>
+        <div>
+          <h3>Build from source</h3>
+          <p class="sub">About five minutes, plus the Xcode download. A copy you build yourself opens straight away, and you can read every line of code.</p>
+        </div>
+        <ol class="steps">
+          <li><span class="n">1</span><div><b>Get the tools</b><span><a href="https://apps.apple.com/app/xcode/id497799835">Xcode</a> (open it once) and <a href="https://brew.sh">Homebrew</a>.</span></div></li>
+          <li><span class="n">2</span><div><b>Build and install</b><span>This builds gitbar into Applications and opens it:</span>
+            <div class="terminal">
+              <div class="bar"><i></i><i></i><i></i><span>Terminal</span><button class="copy" type="button" data-copy="brew install xcodegen
 git clone https://github.com/NavaneethVijay/gitbar.git
 cd gitbar
 make install">Copy</button></div>
-<pre><span class="c"># one-time: XcodeGen generates the Xcode project</span>
-<span class="p">$ </span>brew install xcodegen
-
-<span class="c"># build a Release copy into /Applications and open it</span>
+<pre><span class="p">$ </span>brew install xcodegen
 <span class="p">$ </span>git clone https://github.com/NavaneethVijay/gitbar.git
 <span class="p">$ </span>cd gitbar
 <span class="p">$ </span>make install
 
 <span class="c"># later: update to the latest version</span>
 <span class="p">$ </span>git pull &amp;&amp; make install</pre>
+            </div>
+          </div></li>
+        </ol>
+        <div class="end">
+          <a class="btn btn-ghost" href="https://github.com/NavaneethVijay/gitbar#option-b-build-from-source"><span class="logo github sm"></span>Full walkthrough</a>
+        </div>
       </div>
-      <p class="note">Need more detail? The <a href="https://github.com/NavaneethVijay/gitbar#install">README</a> has a full walkthrough, which token permissions to pick, and fixes for common hiccups. Updating keeps all your accounts and repos.</p>
     </div>
+    <p class="after reveal"><b>Then connect an account:</b> click the menu bar icon, then the gear, then Settings. Add your GitHub or GitLab account and paste a personal access token. The <a href="https://github.com/NavaneethVijay/gitbar#install">README</a> lists which token permissions to pick and fixes for common hiccups.</p>
   </div>
 </section>
 
@@ -490,7 +548,7 @@ make install">Copy</button></div>
     <h2>Spend less time hunting for pull requests.</h2>
     <p class="lede">Free, open source, and made for the Mac.</p>
     <div class="cta">
-      <a class="btn btn-primary" href="#install">Install gitbar</a>
+      <a class="btn btn-primary" href="https://github.com/NavaneethVijay/gitbar/releases/latest">Download gitbar</a>
       <a class="btn btn-ghost" href="https://github.com/NavaneethVijay/gitbar"><span class="logo github sm"></span>Star on GitHub</a>
     </div>
   </div>
