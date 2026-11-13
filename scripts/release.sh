@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
-# Builds a signed gitbar release and publishes it as a GitHub release: a DMG
-# for first installs (drag to Applications), plus the zip + appcast.xml that
-# the app's "Check for Updates…" (Sparkle) installs from.
+# Builds a gitbar release and publishes it as a GitHub release: a DMG for
+# people who'd rather download than build from source (drag to
+# Applications), plus the zip + appcast.xml that the app's "Check for
+# Updates…" (Sparkle) installs from.
+#
+# The app is ad-hoc signed (no Developer ID), so macOS blocks a downloaded
+# copy until the user removes the quarantine flag once — every release page
+# starts with those steps (INSTALL_NOTES below), and README's Install section
+# says the same. Building from source (`make install`) is the other option.
 #
 #   make release VERSION=0.2.0       build, sign, publish release v0.2.0
 #   make release-dry VERSION=0.2.0   same, into build/release, publishes nothing
@@ -42,7 +48,7 @@ APP="$(scripts/build-app.sh "$VERSION" | tail -1)"
 
 step "Packaging"
 mkdir -p "$OUT"
-find "$OUT" -maxdepth 1 \( -name '*.zip' -o -name '*.dmg' -o -name 'appcast.xml' -o -name '*.delta' -o -name 'gitbar-*.md' \) -delete
+find "$OUT" -maxdepth 1 \( -name '*.zip' -o -name '*.dmg' -o -name 'appcast.xml' -o -name '*.delta' -o -name 'gitbar-*.md' -o -name 'release-page.md' \) -delete
 ZIP="$OUT/gitbar-$VERSION.zip"
 ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
 [[ -f "$OUT/notes.md" ]] && cp "$OUT/notes.md" "$OUT/gitbar-$VERSION.md"
@@ -71,15 +77,37 @@ rm -rf "$STAGING"
 hdiutil verify "$DMG" >/dev/null || die "DMG verification failed"
 
 
+# The release page: install steps for the unsigned DMG first, then the
+# notes (build/release/notes.md, else GitHub's generated changelog).
+PAGE="$OUT/release-page.md"
+{
+    cat <<NOTES
+## Install
+
+1. Download **gitbar-$VERSION.dmg** below, open it and drag **gitbar** into **Applications**.
+2. gitbar isn't signed with an Apple Developer ID, so macOS blocks it the first time. Unblock it once in Terminal:
+   \`\`\`sh
+   xattr -dr com.apple.quarantine /Applications/gitbar.app
+   \`\`\`
+3. Open gitbar from Applications. Its icon appears in the menu bar.
+
+Already installed? Use **Check for Updates** in gitbar's Settings → General, or download the new DMG and repeat the steps. Prefer no prompts at all? [Build it from source](https://github.com/$REPO#option-b-build-from-source).
+
+NOTES
+    if [[ -f "$OUT/notes.md" ]]; then
+        echo "## What's new"; echo; cat "$OUT/notes.md"
+    fi
+} > "$PAGE"
+
 if [[ -n "$DRY_RUN" ]]; then
-    step "Dry run — nothing published. Artifacts:"
+    step "Dry run — nothing published. Artifacts (release page: $PAGE):"
     ls -lh "$OUT"
     exit 0
 fi
 
 step "Publishing $TAG to $REPO"
-NOTES_ARGS=(--generate-notes)
-[[ -f "$OUT/notes.md" ]] && NOTES_ARGS=(--notes-file "$OUT/notes.md")
+NOTES_ARGS=(--notes-file "$PAGE")
+[[ -f "$OUT/notes.md" ]] || NOTES_ARGS+=(--generate-notes)  # appended after the install steps
 gh release create "$TAG" "$DMG" "$ZIP" "$OUT/appcast.xml" --repo "$REPO" --title "gitbar $VERSION" "${NOTES_ARGS[@]}"
 
 # Keep the repo's version in step with what's published.

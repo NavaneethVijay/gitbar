@@ -88,13 +88,35 @@ It supports GitHub (github.com and GitHub Enterprise Server) and GitLab (GitLab.
 
 ## Install
 
-gitbar is installed by **building it from source on your own Mac**. There's no `.dmg` or prebuilt download, by design. A copy you build yourself is never blocked by macOS: no security prompt, no "Open Anyway", and you can read every line of what you're running.
+There are two ways to install gitbar. Both give you the same app, and both need **macOS 15 (Sequoia) or later**.
 
-It takes about 5 minutes plus the Xcode download.
+| | Download the DMG | Build from source |
+|---|---|---|
+| Time | 1 minute | about 5 minutes, plus the Xcode download |
+| Needs | nothing | Xcode and Homebrew |
+| First launch | macOS blocks it once; one Terminal command unblocks it | opens straight away, no prompt |
+| Updates | in the app: Settings → General → **Check for Updates** | `git pull && make install` |
 
-### 1. Install the tools (once per Mac)
+### Option A: Download the DMG
 
-You need **macOS 15 (Sequoia) or later**.
+1. Download **gitbar-x.y.z.dmg** from the [latest release](https://github.com/NavaneethVijay/gitbar/releases/latest).
+2. Open it and drag **gitbar** onto the **Applications** folder next to it.
+3. Unblock it once. gitbar isn't signed with an Apple Developer ID (a paid Apple program), so macOS refuses to open a downloaded copy and says Apple "could not verify" it. Open **Terminal** and run:
+   ```sh
+   xattr -dr com.apple.quarantine /Applications/gitbar.app
+   ```
+   This removes the "downloaded from the internet" flag from gitbar only. It doesn't change any security setting on your Mac.
+4. Open **gitbar** from Applications. Its icon appears in the **menu bar** (top right of the screen).
+
+You only do step 3 once. Updates installed from inside gitbar (Settings → General → **Check for Updates**, or automatically) open without it.
+
+> You can also unblock it from System Settings → Privacy & Security → **Open Anyway**, but on some Macs that left gitbar stuck at launch until a restart. The Terminal command avoids that.
+
+### Option B: Build from source
+
+A copy you build yourself is never blocked by macOS: no security prompt, no Terminal command, and you can read every line of what you're running.
+
+**1. Install the tools (once per Mac)**
 
 1. **Xcode**: install it from the [App Store](https://apps.apple.com/app/xcode/id497799835), then **open it once** and let it finish installing its components. The full Xcode app is required; the smaller *Command Line Tools* alone can't build a Mac app.
 2. Point the command line at it and accept its license (asks for your Mac password):
@@ -108,7 +130,7 @@ You need **macOS 15 (Sequoia) or later**.
    brew install xcodegen
    ```
 
-### 2. Build and install gitbar
+**2. Build and install gitbar**
 
 ```sh
 git clone https://github.com/NavaneethVijay/gitbar.git
@@ -118,7 +140,9 @@ make install
 
 `make install` builds a Release copy, installs it to `/Applications/gitbar.app` and opens it. The first build also downloads two Swift packages (Sparkle and swift-markdown), so it needs internet and takes a few minutes; later builds are faster. When it's done, gitbar's icon appears in the **menu bar** (top right of the screen).
 
-### 3. Connect your GitHub or GitLab account
+Copies built from source don't check for updates on their own. Update with `git pull && make install` (below).
+
+### Connect your GitHub or GitLab account
 
 1. Click gitbar's menu bar icon → gear icon → **Settings…** (⌘,)
 2. **Accounts → GitHub → Add Account**, choose **Cloud** (github.com) or **Self-hosted** (GitHub Enterprise Server: enter your server's address).
@@ -131,18 +155,19 @@ gitbar normally lives only in the menu bar. While its Settings window or main wi
 
 ### Update, remove, and other options
 
-| | |
-|---|---|
-| Update to the latest version | `cd gitbar && git pull && make install` |
-| Remove | `make uninstall` |
-| Install without admin rights (to `~/Applications`) | `make install INSTALL_DIR=~/Applications` |
+| | Downloaded (DMG) | Built from source |
+|---|---|---|
+| Update to the latest version | Settings → General → **Check for Updates** (also checks on its own) | `cd gitbar && git pull && make install` |
+| Remove | Quit gitbar (gear menu → Quit), then drag `gitbar.app` from Applications to the Trash | `make uninstall` |
+| Install without admin rights | Drag it into `~/Applications` instead, and use that path in the `xattr` command | `make install INSTALL_DIR=~/Applications` |
 
-Updating keeps your accounts, tokens (stored in the Keychain) and pinned repos.
+Updating keeps your accounts, tokens (stored in the Keychain) and pinned repos. You can switch between the two at any time: installing either way replaces the copy in Applications.
 
 ### Troubleshooting
 
 | Problem | Fix |
 |---|---|
+| "Apple could not verify gitbar…", "gitbar Not Opened" or "gitbar is damaged and can't be opened" (downloaded copy) | Run `xattr -dr com.apple.quarantine /Applications/gitbar.app` in Terminal, then open gitbar again. |
 | `error: XcodeGen isn't installed` / `xcodegen: command not found` | `brew install xcodegen` |
 | `error: the full Xcode app is needed` / `xcodebuild requires Xcode` | Install Xcode, open it once, then run the two `sudo` commands from step 1. |
 | `You have not agreed to the Xcode license` | `sudo xcodebuild -license accept` |

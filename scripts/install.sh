@@ -6,8 +6,8 @@
 #   make install INSTALL_DIR=~/Applications   (no admin rights needed)
 #
 # Updating = `git pull && make install`. Sparkle's automatic update checks
-# are turned off in these builds: an update downloaded from GitHub would be
-# quarantined and blocked, which is exactly what installing from source avoids.
+# are turned off in these builds, so the app never swaps your own build for
+# a published release behind your back. (The DMG builds keep them on.)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
