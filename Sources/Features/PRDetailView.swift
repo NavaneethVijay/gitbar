@@ -85,6 +85,24 @@ struct PRDetailView: View {
 
     private var commentDisabled: Bool { isSubmittingReview || draftIsEmpty }
 
+    /// One-click Approve beside Comment — anyone who can review may approve,
+    /// requested as a reviewer or not. Hidden where the provider refuses it
+    /// (your own GitHub PR) and on merged/closed PRs.
+    private var canQuickApprove: Bool {
+        verdictBlockedReason == nil && pr.source.state == .open
+    }
+
+    private var approveHelp: String {
+        pr.hasPendingReview
+            ? "Approve, submitting your pending review and its comments"
+            : "Approve, with the text above as the review comment"
+    }
+
+    private func approveTapped() {
+        submittedComment = false
+        onSubmitReview(.approve, reviewDraft)
+    }
+
     private var reviewForm: some View {
         ReviewSubmitView(
             provider: provider,
@@ -643,7 +661,9 @@ struct PRDetailView: View {
 
     private var conversationComposer: some View {
         VStack(alignment: .trailing, spacing: 8) {
-            if let reviewSubmitError, submittedComment {
+            // A comment, or a quick Approve from here; the review form
+            // shows its own submissions' errors.
+            if let reviewSubmitError, submittedComment || !isReviewing {
                 Text(reviewSubmitError)
                     .font(.system(size: type.meta))
                     .foregroundStyle(Palette.danger)
@@ -701,19 +721,33 @@ struct PRDetailView: View {
                     .pointerStyle(.link)
                     .disabled(isSubmittingReview)
                 }
-                if isSubmittingReview && submittedComment {
+                if isSubmittingReview && !isReviewing {
                     ProgressView().controlSize(.small).scaleEffect(0.7)
                 }
                 Spacer(minLength: 0)
                 if isWindowed {
                     Button("Comment", action: commentTapped)
-                        .buttonStyle(.borderedProminent)
+                        .buttonStyle(.bordered)
                         .controlSize(.large)
                         .disabled(commentDisabled)
                         .help("Comment in the conversation")
+                    if canQuickApprove {
+                        Button("Approve", action: approveTapped)
+                            .buttonStyle(.borderedProminent)
+                            .tint(RepoActivityState.idle.color)
+                            .controlSize(.large)
+                            .disabled(isSubmittingReview)
+                            .help(approveHelp)
+                    }
                 } else {
                     ReviewActionButton(title: "Comment", color: Palette.neutral, isDisabled: commentDisabled) {
                         commentTapped()
+                    }
+                    if canQuickApprove {
+                        ReviewActionButton(title: "Approve", color: RepoActivityState.idle.color, isDisabled: isSubmittingReview) {
+                            approveTapped()
+                        }
+                        .help(approveHelp)
                     }
                 }
             }
